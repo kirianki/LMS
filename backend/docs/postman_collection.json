@@ -1,0 +1,930 @@
+{
+    "info": {
+        "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "name": "MFI & SACCO Platform - Complete Workflow",
+        "description": "# MFI & SACCO Platform API Collection\n\n## Overview\nThis collection demonstrates the complete tenant onboarding and user management workflow.\n\n## Workflow\n\n### Phase 1: Platform Administration (Public Schema)\n1. **Login as Platform Admin** - Authenticate with the public schema\n2. **Create Tenant** - Provision a new organization with owner credentials\n\n### Phase 2: Tenant Management (Tenant Schema)\n3. **Login as Tenant Owner** - Use credentials from tenant creation\n4. **List Users** - View all users in the tenant\n5. **Create Role** - Define a new role with approval limits\n6. **Create Staff User** - Add a new user to the tenant\n\n## Environment Variables\nThe collection automatically manages these variables:\n- `admin_token` - Platform admin JWT token\n- `tenant_id` - ID of created tenant\n- `tenant_domain` - Domain URL for the tenant\n- `owner_email` - Owner email (from tenant creation)\n- `owner_password` - Owner password (from tenant creation)\n- `access_token` - Tenant user JWT token\n- `role_id` - ID of created role\n\n## Usage\n1. Set `base_url` variable (default: http://localhost:8000)\n2. Set `new_tenant_domain` variable (e.g., acme.localhost)\n3. Run requests in sequence or use Collection Runner",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "1. Platform Admin (Public Schema)",
+            "description": "Platform-level operations for managing tenants, subscriptions, and modules.",
+            "item": [
+                {
+                    "name": "1.1 Login (Platform Admin)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 200\", function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Response has access token\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.access).to.be.a('string');",
+                                    "    pm.environment.set(\"admin_token\", jsonData.access);",
+                                    "    pm.environment.set(\"admin_refresh\", jsonData.refresh);",
+                                    "});",
+                                    "",
+                                    "console.log(\"✅ Platform Admin authenticated\");"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"password123\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/v1/auth/token/",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "v1",
+                                "auth",
+                                "token",
+                                ""
+                            ]
+                        },
+                        "description": "Authenticate as platform administrator to access tenant management endpoints."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "1.2 Create Tenant (with Owner Bootstrap)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 201\", function () {",
+                                    "    pm.response.to.have.status(201);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Tenant created successfully\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.id).to.be.a('string');",
+                                    "    pm.expect(jsonData.name).to.equal(\"Acme Microfinance\");",
+                                    "    ",
+                                    "    // Store tenant details",
+                                    "    pm.environment.set(\"tenant_id\", jsonData.id);",
+                                    "    pm.environment.set(\"tenant_schema\", jsonData.schema_name);",
+                                    "    ",
+                                    "    // Store domain (first domain in array)",
+                                    "    if (jsonData.domains && jsonData.domains.length > 0) {",
+                                    "        pm.environment.set(\"tenant_domain\", jsonData.domains[0].domain);",
+                                    "    }",
+                                    "});",
+                                    "",
+                                    "// Store owner credentials for next phase",
+                                    "var requestBody = JSON.parse(pm.request.body.raw);",
+                                    "pm.environment.set(\"owner_email\", requestBody.owner_email);",
+                                    "pm.environment.set(\"owner_password\", requestBody.owner_password);",
+                                    "",
+                                    "console.log(\"✅ Tenant created with owner: \" + requestBody.owner_email);"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{admin_token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Acme Microfinance\",\n    \"schema_name\": \"acme_mfi\",\n    \"kra_pin\": \"P051389456Z\",\n    \"status\": \"active\",\n    \"domain_url\": \"{{new_tenant_domain}}\",\n    \"owner_email\": \"ceo@acme.com\",\n    \"owner_password\": \"SecurePass123!\",\n    \"owner_name\": \"John Doe\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/v1/tenants/",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "v1",
+                                "tenants",
+                                ""
+                            ]
+                        },
+                        "description": "Create a new tenant organization. This automatically:\n1. Creates the tenant in public schema\n2. Creates the domain mapping\n3. Provisions the tenant's database schema\n4. Creates an 'Administrator' role\n5. Creates the owner user with provided credentials"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "1.3 List All Tenants",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{admin_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/v1/tenants/",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "v1",
+                                "tenants",
+                                ""
+                            ]
+                        },
+                        "description": "View all tenants in the platform."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "2. Tenant Owner (Tenant Schema)",
+            "description": "Tenant-specific operations using the owner credentials from bootstrapping.",
+            "item": [
+                {
+                    "name": "2.1 Login (Tenant Owner)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 200\", function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Response has access token\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.access).to.be.a('string');",
+                                    "    pm.environment.set(\"access_token\", jsonData.access);",
+                                    "    pm.environment.set(\"refresh_token\", jsonData.refresh);",
+                                    "});",
+                                    "",
+                                    "console.log(\"✅ Tenant Owner authenticated\");"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"email\": \"{{owner_email}}\",\n    \"password\": \"{{owner_password}}\"\n}"
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/auth/token/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "auth",
+                                "token",
+                                ""
+                            ]
+                        },
+                        "description": "Login as the tenant owner using credentials provided during tenant creation."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "2.2 List Users",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/users/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "users",
+                                ""
+                            ]
+                        },
+                        "description": "List all users in the tenant. Should show the owner user created during bootstrapping."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "2.3 List Roles",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/roles/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "roles",
+                                ""
+                            ]
+                        },
+                        "description": "List all roles. Should show the 'Administrator' role created during bootstrapping."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "2.4 Create Role (Loan Officer)",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 201\", function () {",
+                                    "    pm.response.to.have.status(201);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Role created successfully\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.id).to.be.a('string');",
+                                    "    pm.environment.set(\"role_id\", jsonData.id);",
+                                    "});",
+                                    "",
+                                    "console.log(\"✅ Role created\");"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Loan Officer\",\n    \"description\": \"Can create loan applications but cannot approve\",\n    \"approval_limit\": 0\n}"
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/roles/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "roles",
+                                ""
+                            ]
+                        },
+                        "description": "Create a new role with specific approval limits."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "2.5 Create Staff User",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 201\", function () {",
+                                    "    pm.response.to.have.status(201);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"User created successfully\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.id).to.be.a('string');",
+                                    "    pm.expect(jsonData.email).to.equal(\"jane.officer@acme.com\");",
+                                    "});",
+                                    "",
+                                    "console.log(\"✅ Staff user created\");"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"email\": \"jane.officer@acme.com\",\n    \"password\": \"StaffPass123!\",\n    \"first_name\": \"Jane\",\n    \"last_name\": \"Officer\",\n    \"role\": \"{{role_id}}\"\n}"
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/users/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "users",
+                                ""
+                            ]
+                        },
+                        "description": "Create a new staff user and assign them to a role."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "2.6 Refresh Token",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 200\", function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"New access token received\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.expect(jsonData.access).to.be.a('string');",
+                                    "    pm.environment.set(\"access_token\", jsonData.access);",
+                                    "});",
+                                    "",
+                                    "console.log(\"✅ Token refreshed\");"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"refresh\": \"{{refresh_token}}\"\n}"
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/auth/token/refresh/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "auth",
+                                "token",
+                                "refresh",
+                                ""
+                            ]
+                        },
+                        "description": "Refresh the access token using the refresh token."
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "3. Customer Management (Tenant Schema)",
+            "description": "Lifecycle management of platform customers within a tenant.",
+            "item": [
+                {
+                    "name": "3.1 Create Customer",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "pm.test(\"Status code is 201\", function () {",
+                                    "    pm.response.to.have.status(201);",
+                                    "});",
+                                    "",
+                                    "pm.test(\"Customer created\", function () {",
+                                    "    var jsonData = pm.response.json();",
+                                    "    pm.environment.set(\"customer_id\", jsonData.id);",
+                                    "});",
+                                    "",
+                                    "console.log(\"✅ Customer created\");"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "first_name",
+                                    "value": "John",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "last_name",
+                                    "value": "Doe",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "email",
+                                    "value": "john.doe@tenant.com",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "phone_number",
+                                    "value": "+254700000001",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "id_type",
+                                    "value": "national_id",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "id_number",
+                                    "value": "ID-999888",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "date_of_birth",
+                                    "value": "1990-01-01",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "address",
+                                    "value": "123 Street Name",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "employment_status",
+                                    "value": "employed",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "monthly_income",
+                                    "value": "75000",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "id_document",
+                                    "description": "Select an ID image/pdf",
+                                    "type": "file",
+                                    "src": []
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/customers/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "customers",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "3.2 List Customers",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/customers/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "customers",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "3.3 Verify Customer ID (Staff Reserved)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/customers/{{customer_id}}/verify_id/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "customers",
+                                "{{customer_id}}",
+                                "verify_id",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "4. Collateral Management (Tenant Schema)",
+            "description": "Asset management for loans within a tenant.",
+            "item": [
+                {
+                    "name": "4.1 Register Collateral (Motor Vehicle)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "customer",
+                                    "value": "{{customer_id}}",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "collateral_type",
+                                    "value": "motor_vehicle",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "market_value",
+                                    "value": "1200000",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "forced_sale_value",
+                                    "value": "850000",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "valuation_date",
+                                    "value": "2024-01-16",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "reg_number",
+                                    "value": "KDC 001Z",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "logbook_number",
+                                    "value": "L-998877",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "make",
+                                    "value": "Toyota",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "model",
+                                    "value": "Hilux",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/collateral/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "collateral",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "4.2 Register Collateral (Land/Property)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "customer",
+                                    "value": "{{customer_id}}",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "collateral_type",
+                                    "value": "land_property",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "market_value",
+                                    "value": "4500000",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "forced_sale_value",
+                                    "value": "3200000",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "valuation_date",
+                                    "value": "2024-01-16",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "lr_number",
+                                    "value": "MACHAKOS/SYOKIMAU/123",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "location",
+                                    "value": "Syokimau",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "property_size",
+                                    "value": "40x80",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "tenure_type",
+                                    "value": "freehold",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/collateral/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "collateral",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "4.3 List All Collateral",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/collateral/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "collateral",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "4.4 Configure Tenant SMTP (Staff)",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "json",
+                            "json": {
+                                "smtp_host": "smtp.gmail.com",
+                                "smtp_port": 587,
+                                "smtp_user": "loans@saccomaster.com",
+                                "smtp_password": "securepassword",
+                                "use_tls": true,
+                                "from_email": "loans@saccomaster.com"
+                            }
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/email-configs/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "email-configs",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "4.5 Register Trusted Valuer",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "json",
+                            "json": {
+                                "name": "Prime Asset Valuers",
+                                "email": "info@primevaluers.co.ke",
+                                "phone": "+254700111222",
+                                "valuation_types": [
+                                    "motor_vehicle",
+                                    "land_property"
+                                ]
+                            }
+                        },
+                        "url": {
+                            "raw": "http://{{tenant_domain}}:8000/api/v1/valuers/",
+                            "protocol": "http",
+                            "host": [
+                                "{{tenant_domain}}"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "v1",
+                                "valuers",
+                                ""
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ],
+    "event": [
+        {
+            "listen": "prerequest",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    ""
+                ]
+            }
+        },
+        {
+            "listen": "test",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    ""
+                ]
+            }
+        }
+    ],
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
+        },
+        {
+            "key": "new_tenant_domain",
+            "value": "acme.localhost",
+            "type": "string"
+        }
+    ]
+}
