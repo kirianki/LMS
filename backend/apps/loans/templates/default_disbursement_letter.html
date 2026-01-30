@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+
+            @frame footer_frame {
+                -pdf-frame-content: footer_content;
+                left: 2cm;
+                width: 17cm;
+                bottom: 1cm;
+                height: 1.5cm;
+            }
+        }
+
+        body {
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            font-size: 10pt;
+            color: #1e293b;
+            line-height: 1.5;
+        }
+
+        /* Branding Colors */
+        .primary-text {
+            color: {{ primary_color }};
+        }
+
+        .secondary-text {
+            color: {{ secondary_color }};
+        }
+
+        /* Table Styles */
+        .letterhead {
+            width: 100%;
+            border-bottom: 2pt solid {{ primary_color }};
+            padding-bottom: 15pt;
+            margin-bottom: 20pt;
+        }
+
+        .logo-box {
+            width: 50%;
+            vertical-align: top;
+        }
+
+        .company-info {
+            width: 50%;
+            text-align: right;
+            font-size: 8pt;
+            color: #64748b;
+            line-height: 1.3;
+        }
+
+        .summary-table {
+            width: 100%;
+            margin: 20pt 0;
+            border: 0.5pt solid #e2e8f0;
+            border-collapse: collapse;
+        }
+
+        .summary-table td {
+            padding: 10pt;
+            border: 0.5pt solid #e2e8f0;
+        }
+
+        .label {
+            font-weight: bold;
+            background: #f8fafc;
+            width: 35%;
+            color: #475569;
+        }
+
+        .value {
+            color: #0f172a;
+            font-weight: 500;
+        }
+
+        .channel-table {
+            width: 100%;
+            margin: 15pt 0;
+        }
+
+        .channel-box {
+            border: 1pt solid #cbd5e1;
+            padding: 10pt;
+            margin-bottom: 10pt;
+            border-radius: 4pt;
+        }
+
+        h1 {
+            font-size: 18pt;
+            margin: 0;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        h2 {
+            font-size: 12pt;
+            margin: 20pt 0 10pt 0;
+            text-transform: uppercase;
+            border-bottom: 1pt solid #e2e8f0;
+            padding-bottom: 4pt;
+        }
+
+        .signature-section {
+            width: 100%;
+            margin-top: 40pt;
+        }
+
+        .sig-box {
+            width: 48%;
+            vertical-align: top;
+        }
+
+        .sig-line {
+            border-top: 1pt solid #000;
+            margin-top: 40pt;
+            margin-bottom: 5pt;
+            width: 80%;
+        }
+
+        #footer_content {
+            font-size: 7pt;
+            color: #94a3b8;
+            border-top: 0.5pt solid #e2e8f0;
+            padding-top: 4pt;
+        }
+
+        /* Watermark Styling */
+        #watermark {
+            position: absolute;
+            top: 5cm;
+            left: 2cm;
+            width: 17cm;
+            opacity: 0.05;
+            z-index: -1000;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="footer_content">
+        CUSTOMER: {{ borrower_name }} | ID: {{ footer_id_val }} | REF: {{ loan_ref }} | PAGE <pdf:pagenumber> OF
+            <pdf:pagecount>
+    </div>
+
+    {% if logo_path %}
+    <div id="watermark">
+        <img src="{{ logo_path }}" style="width: 100%;">
+    </div>
+    {% endif %}
+
+    <div class="container">
+        <!-- Letterhead -->
+        <table class="letterhead">
+            <tr>
+                <td class="logo-box">
+                    {% if tenant_settings.logo %}
+                    <img src="{{ tenant_settings.logo.path }}" style="max-width: 200px; max-height: 80px;">
+                    {% else %}
+                    <h1 class="primary-text">{{ company_name }}</h1>
+                    <p style="font-size: 8pt; margin: 0;">{{ company_tagline }}</p>
+                    {% endif %}
+                </td>
+                <td class="company-info">
+                    <strong>{{ company_name }}</strong><br>
+                    {{ company_address }}<br>
+                    Phone: {{ company_phone }}<br>
+                    Email: {{ company_email }}
+                </td>
+            </tr>
+        </table>
+
+        <!-- Date & Ref -->
+        <div style="margin-bottom: 20pt;">
+            <p style="margin: 0;"><strong>DATE:</strong> {{ letter_date }}</p>
+            <p style="margin: 0;"><strong>REF NO:</strong> {{ loan_ref }}</p>
+        </div>
+
+        <h1 style="text-align: center; color: {{ primary_color }}; font-size: 16pt; margin-bottom: 30pt;">DISBURSEMENT
+            CHECKLIST</h1>
+
+        <p>Dear <strong>{{ borrower_name }}</strong>,</p>
+
+        <p>This serves to confirm that your loan application has been fully processed and approved for disbursement.
+            Please review the details below and provide your specific disbursement instructions for the net amount.</p>
+
+        <h2>1. DISBURSEMENT SUMMARY</h2>
+        <table class="summary-table">
+            <tr>
+                <td class="label">Approved Net Amount</td>
+                <td class="value primary-text" style="font-size: 12pt;">KES {{ net_amount }}</td>
+            </tr>
+            <tr>
+                <td class="label">Disbursement Date</td>
+                <td class="value">{{ disb_date }}</td>
+            </tr>
+            <tr>
+                <td class="label">Initial System Method</td>
+                <td class="value">{{ method }}</td>
+            </tr>
+        </table>
+
+        <h2>2. PAYMENT CHANNEL CONFIRMATION</h2>
+        <p style="font-size: 9pt; color: #64748b; margin-bottom: 10pt;">Please tick one and provide details where the
+            funds should be remitted:</p>
+
+        <div class="channel-box" {% if repayment_channel == "MPESA" %}style="border: 2pt solid {{ primary_color }}; background-color: #f0fdf4;"{% endif %}>
+            <p><strong>[{% if repayment_channel == "MPESA" %}X{% else %} {% endif %}] OPTION A: MOBILE MONEY
+                    (M-PESA)</strong></p>
+            <p style="margin-left: 20pt;">Registered Name: __________________________________________________</p>
+            <p style="margin-left: 20pt;">Phone Number: __________________________________________________</p>
+        </div>
+
+        <div class="channel-box" {% if repayment_channel == "BANK TRANSFER" %}style="border: 2pt solid {{ primary_color }}; background-color: #f0fdf4;"{% endif %}>
+            <p><strong>[{% if repayment_channel == "BANK TRANSFER" %}X{% else %} {% endif %}] OPTION B: BANK TRANSFER
+                    (EFT/RTGS)</strong></p>
+            <p style="margin-left: 20pt;">Account Name: __________________________________________________</p>
+            <p style="margin-left: 20pt;">Account Number: __________________________________________________</p>
+            <p style="margin-left: 20pt;">Bank Name & Branch: __________________________________________________</p>
+        </div>
+
+        <div style="margin-top: 20pt; font-style: italic; font-size: 9pt;">
+            <strong>AUTHORIZATION:</strong> I/We hereby authorize the Lender to disburse the net amount of <strong>KES
+                {{ net_amount }}</strong> using the details provided above. I/We understand that any error in the
+            details provided may lead to delays or loss of funds for which the Lender shall not be held liable.
+        </div>
+
+        <pdf:nextpage />
+
+        <!-- Execution -->
+        <h2 style="margin-top: 30pt;">3. EXECUTION</h2>
+        <table class="signature-section">
+            <tr>
+                <td class="sig-box">
+                    {% if is_company %}
+                    <p style="font-weight: bold; font-size: 8pt; margin-bottom: 5pt;">SIGNED FOR AND ON BEHALF OF THE
+                        BORROWER:</p>
+                    <p style="font-size: 8pt; font-weight: bold; margin-bottom: 10pt;">{{ borrower_name }}</p>
+
+                    <p><strong>NAME:</strong> {{ contact_name }}</p>
+                    <p><strong>DESIGNATION:</strong> {{ contact_designation }}</p>
+                    <br>
+                    <p>SIGNATURE: ______________________________</p>
+                    <p>DATE: ______________________________</p>
+
+                    <div style="margin-top: 25pt;">
+                        <p style="font-weight: bold; font-size: 8pt; margin-bottom: 5pt;">IN THE PRESENCE OF / SECOND
+                            SIGNATORY:</p>
+                        <p><strong>NAME:</strong> ______________________________</p>
+                        <p><strong>DESIGNATION:</strong> ______________________________</p>
+                        <br>
+                        <p>SIGNATURE: ______________________________</p>
+                        <p>DATE: ______________________________</p>
+                    </div>
+                    {% else %}
+                    <p style="font-weight: bold; font-size: 8pt;">SIGNED BY THE BORROWER:</p>
+                    <br><br>
+                    <p><strong>NAME: {{ borrower_name }}</strong></p>
+                    <p>ID/REG NO: {{ borrower_id }}</p>
+                    <br>
+                    <p>SIGNATURE: ______________________________</p>
+                    <p>DATE: ______________________________</p>
+                    {% endif %}
+                </td>
+                <td style="width: 4%;"></td>
+                <td class="sig-box">
+                    <p style="font-weight: bold; font-size: 8pt;">FOR AND ON BEHALF OF LENDER:</p>
+                    <div style="margin-top: 20pt;">
+                        <img src="" style="max-height: 40pt; display: none;"> <!-- Placeholder for Stamp/Sig -->
+                        <div style="height: 40pt;"></div>
+                    </div>
+                    <p><strong>{{ loan_officer_name }}</strong></p>
+                    <p style="font-size: 8pt;">{{ company_name }}</p>
+                    <p>DATE: {{ letter_date }}</p>
+                </td>
+            </tr>
+        </table>
+
+        <div
+            style="margin-top: 40pt; border: 1pt solid #e2e8f0; padding: 15pt; background-color: #f8fafc; font-size: 8pt;">
+            <p style="margin: 0; font-weight: bold; text-transform: uppercase; color: #64748b;">Next Steps</p>
+            <ol style="margin: 5pt 0 0 15pt; color: #475569;">
+                <li>Scan and upload this signed authorization via the Borrower Portal or return it to your Loan Officer.
+                </li>
+                <li>Funds will be disbursed within 24 hours of receipt of valid confirmation.</li>
+                <li>Your first installment of <strong>KES {{ installment_amount }}</strong> will be due on <strong>{{
+                        first_due_date }}</strong>.</li>
+            </ol>
+        </div>
+    </div>
+</body>
+
+</html>

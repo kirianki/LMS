@@ -62,41 +62,63 @@ class TenantSerializer(serializers.ModelSerializer):
         owner_password = validated_data.pop('owner_password')
         owner_name = validated_data.pop('owner_name')
 
+        schema_name = validated_data.get('schema_name')
+
+        # 0. Pre-creation validation
+        if Tenant.objects.filter(schema_name=schema_name).exists():
+            raise serializers.ValidationError({"schema_name": "This schema name is already taken."})
+        
+        if Domain.objects.filter(domain=domain_url).exists():
+            raise serializers.ValidationError({"domain_url": "This domain is already taken."})
+
         with transaction.atomic():
-            # 1. Create Tenant
-            tenant = Tenant.objects.create(**validated_data)
-
-            # 2. Create Domain
-            Domain.objects.create(domain=domain_url, tenant=tenant, is_primary=True)
-            
-            # 2.5 Auto-create port 9090 alias for local dev environment
-            if 'localhost' in domain_url and not ':' in domain_url:
-                Domain.objects.get_or_create(domain=f"{domain_url}:9090", tenant=tenant, defaults={'is_primary': False})
-
-            # 3. Bootstrap Owner in Tenant Schema
-            with schema_context(tenant.schema_name):
-                # The 'Administrator' role and other defaults are created via 
-                # signal (apps.tenants.signals.bootstrap_tenant_data) 
-                # triggered by post_schema_sync during tenant creation.
+            # 1. Create Tenant & Domain in PUBLIC schema context
+            # This is critical to avoid "Can't create tenant outside the public schema" error
+            # when the request originates from a tenant sub-domain.
+            with schema_context('public'):
+                tenant = Tenant.objects.create(**validated_data)
+                Domain.objects.create(domain=domain_url, tenant=tenant, is_primary=True)
                 
-                admin_role = Role.objects.get(name='Administrator')
+                # 2.5 Auto-create port 9090 alias for local dev environment
+                if 'localhost' in domain_url and not ':' in domain_url:
+                    Domain.objects.get_or_create(domain=f"{domain_url}:9090", tenant=tenant, defaults={'is_primary': False})
 
-                # Create Owner User
-                first_name = owner_name.split(' ')[0]
-                last_name = ' '.join(owner_name.split(' ')[1:]) if ' ' in owner_name else ''
-                
-                user = User(
-                    email=owner_email,
-                    first_name=first_name,
-                    last_name=last_name,
-                    role=admin_role,
-                    is_staff=True,
-                    is_active=True,
-                    is_superuser=True 
-                )
-                user.set_password(owner_password)
-                user._history_user = None
-                user.save()
+            # 2. Bootstrap Owner in the new Tenant Schema
+            try:
+                with schema_context(tenant.schema_name):
+                    # The 'Administrator' role and other defaults are created via 
+                    # signal (apps.tenants.signals.bootstrap_tenant_data) 
+                    # triggered by post_schema_sync during tenant creation.
+                    
+                    try:
+                        admin_role = Role.objects.get(name='Administrator')
+                    except Role.DoesNotExist:
+                        # Fallback if signal hasn't finished or failed
+                        admin_role = Role.objects.create(name='Administrator', description="Tenant Owner")
+
+                    # Create Owner User
+                    parts = owner_name.split(' ')
+                    first_name = parts[0]
+                    last_name = ' '.join(parts[1:]) if len(parts) > 1 else ''
+                    
+                    user = User(
+                        email=owner_email,
+                        first_name=first_name,
+                        last_name=last_name,
+                        role=admin_role,
+                        is_staff=True,
+                        is_active=True,
+                        is_superuser=True 
+                    )
+                    user.set_password(owner_password)
+                    user._history_user = None
+                    user.save()
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Tenant bootstrapping failed for {tenant.schema_name}: {str(e)}")
+                # We might want to re-raise if we want to roll back the whole thing
+                raise serializers.ValidationError({"detail": f"Tenant created but owner bootstrapping failed: {str(e)}"})
             
             return tenant
 

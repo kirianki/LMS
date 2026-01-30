@@ -28,7 +28,7 @@ class LoanGuarantorSerializer(serializers.ModelSerializer):
 
 
 class LoanApplicationSerializer(models.Model if False else serializers.ModelSerializer): # Type hint hack
-    customer_details = serializers.SerializerMethodField()
+    borrower_details = serializers.SerializerMethodField()
     product_details = serializers.SerializerMethodField()
     deductions = LoanDeductionSerializer(many=True, read_only=True)
     guarantors = LoanGuarantorSerializer(many=True, read_only=True)
@@ -44,16 +44,18 @@ class LoanApplicationSerializer(models.Model if False else serializers.ModelSeri
             'offer_letter_file', 'disbursement_letter_file'
         ]
     
-    def get_customer_details(self, obj):
+    def get_borrower_details(self, obj):
+        name = obj.borrower.business_name if obj.borrower.borrower_type in ['company', 'institution'] else f"{obj.borrower.first_name} {obj.borrower.last_name}"
         return {
-            'id': obj.customer.id,
-            'name': f"{obj.customer.first_name} {obj.customer.last_name}",
-            'customer_number': obj.customer.customer_number,
-            'phone_number': obj.customer.phone_number,
-            'email': obj.customer.email,
-            'id_number': obj.customer.id_number,
-            'hybrid_score': obj.customer.hybrid_score,
-            'internal_score': obj.customer.internal_score,
+            'id': obj.borrower.id,
+            'name': name,
+            'borrower_number': obj.borrower.borrower_number,
+            'phone_number': obj.borrower.phone_number,
+            'email': obj.borrower.email,
+            'id_number': obj.borrower.id_number,
+            'hybrid_score': obj.borrower.hybrid_score,
+            'internal_score': obj.borrower.internal_score,
+            'borrower_type': obj.borrower.borrower_type,
         }
 
     def get_product_details(self, obj):
@@ -88,7 +90,7 @@ class LoanApplicationRejectSerializer(serializers.Serializer):
 
 
 class LoanSerializer(serializers.ModelSerializer):
-    customer_name = serializers.SerializerMethodField()
+    borrower_name = serializers.SerializerMethodField()
     product_name = serializers.ReadOnlyField(source='product.name')
     status_display = serializers.ReadOnlyField(source='get_status_display')
     arrears_category_display = serializers.ReadOnlyField(source='get_arrears_category_display')
@@ -97,16 +99,20 @@ class LoanSerializer(serializers.ModelSerializer):
         model = Loan
         fields = '__all__'
     
-    def get_customer_name(self, obj):
-        return f"{obj.customer.first_name} {obj.customer.last_name}"
+    def get_borrower_name(self, obj):
+        if obj.borrower.borrower_type in ['company', 'institution']:
+            return obj.borrower.business_name
+        return f"{obj.borrower.first_name} {obj.borrower.last_name}"
 
 
 class RepaymentScheduleSerializer(serializers.ModelSerializer):
     status_display = serializers.ReadOnlyField(source='get_status_display')
+    total_due = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     
     class Meta:
         model = RepaymentSchedule
-        fields = '__all__'
+        fields = ['id', 'installment_number', 'due_date', 'principal_due', 'interest_due', 'fees_due', 'total_due', 'status', 'status_display']
+        read_only_fields = ['id', 'status', 'status_display', 'total_due']
 
 
 class LoanRepaymentSerializer(serializers.ModelSerializer):
@@ -136,8 +142,11 @@ class LoanFeeSerializer(serializers.ModelSerializer):
 
 
 class DisburseSerializer(serializers.Serializer):
-    disbursement_method = serializers.CharField(default='mpesa')
-    phone_number = serializers.CharField(required=False)  # For M-Pesa
+    disbursement_method = serializers.ChoiceField(choices=['cash', 'mpesa', 'bank_transfer', 'cheque'])
+    disbursement_details = serializers.JSONField(required=False)
+    cash_account_id = serializers.UUIDField(required=False, allow_null=True)
+    disbursement_proof = serializers.FileField(required=False, allow_null=True, help_text="Receipt/screenshot for manual verification")
+    disbursement_reference_manual = serializers.CharField(required=False, allow_blank=True, help_text="Manual transaction code/reference")
 
 
 # ========== NEW ARREARS MANAGEMENT SERIALIZERS ==========
@@ -162,7 +171,7 @@ class PromiseToPaySerializer(serializers.ModelSerializer):
 
 class CollectionCaseSerializer(serializers.ModelSerializer):
     loan_number = serializers.ReadOnlyField(source='loan.loan_number')
-    customer_name = serializers.SerializerMethodField()
+    borrower_name = serializers.SerializerMethodField()
     status_display = serializers.ReadOnlyField(source='get_status_display')
     priority_display = serializers.ReadOnlyField(source='get_priority_display')
     assigned_to_name = serializers.ReadOnlyField(source='assigned_to.get_full_name')
@@ -175,8 +184,10 @@ class CollectionCaseSerializer(serializers.ModelSerializer):
         model = CollectionCase
         fields = '__all__'
         
-    def get_customer_name(self, obj):
-        return f"{obj.loan.customer.first_name} {obj.loan.customer.last_name}"
+    def get_borrower_name(self, obj):
+        if obj.loan.borrower.borrower_type in ['company', 'institution']:
+            return obj.loan.borrower.business_name
+        return f"{obj.loan.borrower.first_name} {obj.loan.borrower.last_name}"
 
 
 class RecoveryActionSerializer(serializers.ModelSerializer):
@@ -191,11 +202,13 @@ class RecoveryActionSerializer(serializers.ModelSerializer):
 class CollateralDischargeSerializer(serializers.ModelSerializer):
     status_display = serializers.ReadOnlyField(source='get_status_display')
     loan_number = serializers.ReadOnlyField(source='loan.loan_number')
-    customer_name = serializers.SerializerMethodField()
+    borrower_name = serializers.SerializerMethodField()
     
     class Meta:
         model = CollateralDischarge
         fields = '__all__'
         
-    def get_customer_name(self, obj):
-        return f"{obj.loan.customer.first_name} {obj.loan.customer.last_name}"
+    def get_borrower_name(self, obj):
+        if obj.loan.borrower.borrower_type in ['company', 'institution']:
+            return obj.loan.borrower.business_name
+        return f"{obj.loan.borrower.first_name} {obj.loan.borrower.last_name}"

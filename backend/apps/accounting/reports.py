@@ -1,6 +1,9 @@
+import logging
 from django.db.models import Sum
 from .models import ChartOfAccount, LedgerEntry
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 def generate_trial_balance(date=None):
     """Generate a Trial Balance report."""
@@ -37,22 +40,39 @@ def generate_trial_balance(date=None):
 
 def generate_balance_sheet(date=None):
     """Generate Balance Sheet: Assets = Liabilities + Equity."""
-    accounts = ChartOfAccount.objects.filter(is_active=True)
     
-    def get_total(acc_type):
-        subset = accounts.filter(account_type=acc_type, parent=None)
+    def get_account_balance(account, date=None, depth=0):
+        """Recursively calculate balance for an account and its children with cycle protection."""
+        if depth > 10:
+            logger.warning(f"Max depth reached for account balance aggregation at {account.code}")
+            return account.balance
+            
+        # 1. Start with the account's own balance
+        total = account.balance
+        
+        # 2. Add balances of all children recursively
+        for child in account.children.all():
+            total += get_account_balance(child, date, depth + 1)
+            
+        return total
+
+    def get_category_data(acc_type, date=None):
+        # Top-level accounts for this type
+        root_accounts = ChartOfAccount.objects.filter(account_type=acc_type, parent=None, is_active=True)
         total = Decimal('0.00')
         details = []
-        for acc in subset:
-            # Recursive balance calculation would be better, but for now simple sum
-            balance = acc.balance # Model updates this on post
-            details.append({'name': acc.name, 'balance': balance})
-            total += balance
+        
+        for acc in root_accounts:
+            balance = get_account_balance(acc, date)
+            if balance != 0:
+                details.append({'name': acc.name, 'balance': balance})
+                total += balance
+                
         return total, details
 
-    assets_total, assets_list = get_total('asset')
-    liabilities_total, liabilities_list = get_total('liability')
-    equity_total, equity_list = get_total('equity')
+    assets_total, assets_list = get_category_data('asset', date)
+    liabilities_total, liabilities_list = get_category_data('liability', date)
+    equity_total, equity_list = get_category_data('equity', date)
 
     return {
         'assets': {'total': assets_total, 'details': assets_list},
@@ -197,4 +217,98 @@ def generate_cash_flow_statement(start_date, end_date):
             'net_cash_operating': operating_in - operating_out
         },
         'net_increase_in_cash': operating_in - operating_out
+    }
+
+def generate_disbursements_report(start_date, end_date):
+    """Detailed report for all loan disbursements."""
+    from apps.loans.models import Loan
+    disbursements = Loan.objects.filter(
+        disbursement_date__range=[start_date, end_date]
+    ).select_related('borrower', 'product').order_by('disbursement_date')
+    
+    report = []
+    total_amount = Decimal('0.00')
+    
+    for loan in disbursements:
+        report.append({
+            'loan_number': loan.loan_number,
+            'borrower': f"{loan.borrower.first_name} {loan.borrower.last_name}",
+            'product': loan.product.name,
+            'amount': loan.principal_amount,
+            'date': loan.disbursement_date,
+            'method': loan.disbursement_method,
+            'reference': loan.disbursement_reference
+        })
+        total_amount += loan.principal_amount
+        
+    return {
+        'data': report,
+        'summary': {
+            'total_amount': total_amount,
+            'count': len(report),
+            'avg_loan_size': total_amount / len(report) if report else 0
+        }
+    }
+
+def generate_collections_report(start_date, end_date):
+    """Summary of all loan repayments received."""
+    from apps.loans.models import LoanRepayment
+    payments = LoanRepayment.objects.filter(
+        payment_date__range=[start_date, end_date]
+    ).select_related('loan', 'loan__borrower').order_by('payment_date')
+    
+    report = []
+    summary = {
+        'total_principal': Decimal('0.00'),
+        'total_interest': Decimal('0.00'),
+        'total_fees': Decimal('0.00'),
+        'total_penalties': Decimal('0.00'),
+        'total_collected': Decimal('0.00'),
+    }
+    
+    for p in payments:
+        report.append({
+            'date': p.payment_date,
+            'loan': p.loan.loan_number,
+            'borrower': f"{p.loan.borrower.first_name} {p.loan.borrower.last_name}",
+            'amount': p.amount,
+            'method': p.get_payment_method_display(),
+            'principal': p.principal_paid,
+            'interest': p.interest_paid,
+            'fees': p.fee_paid,
+            'penalties': p.penalty_paid
+        })
+        summary['total_principal'] += p.principal_paid
+        summary['total_interest'] += p.interest_paid
+        summary['total_fees'] += p.fee_paid
+        summary['total_penalties'] += p.penalty_paid
+        summary['total_collected'] += p.amount
+        
+    return {
+        'data': report,
+        'summary': summary
+    }
+
+def generate_portfolio_performance():
+    """High-level summary of loan product performance."""
+    from apps.loans.models import LoanProduct, Loan
+    from apps.loans.services.arrears import calculate_par_metrics
+    
+    products = LoanProduct.objects.filter(is_active=True)
+    par_metrics = calculate_par_metrics()
+    
+    product_stats = []
+    for p in products:
+        loans = Loan.objects.filter(product=p, status='active')
+        total_outstanding = loans.aggregate(Sum('outstanding_balance'))['outstanding_balance__sum'] or Decimal('0.00')
+        product_stats.append({
+            'name': p.name,
+            'active_loans': loans.count(),
+            'outstanding_balance': total_outstanding
+        })
+        
+    return {
+        'products': product_stats,
+        'par_metrics': par_metrics,
+        'risk_level': 'High' if par_metrics['par30_percent'] > 10 else 'Moderate' if par_metrics['par30_percent'] > 5 else 'Low'
     }

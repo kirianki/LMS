@@ -46,25 +46,50 @@ def calculate_processing_fee(principal, fee_type, fee_value):
         return principal * Decimal(str(fee_value)) / Decimal('100')
 
 
-def generate_repayment_schedule(loan):
+def generate_repayment_schedule(loan_obj):
     """
-    Generate repayment schedule entries for a loan.
+    Generate repayment schedule entries for a loan or application.
     
     Args:
-        loan: Loan instance
+        loan_obj: Loan or LoanApplication instance
     
     Returns:
         List of RepaymentSchedule instances (not saved)
     """
-    product = loan.product
-    principal = loan.principal_amount
-    total_interest = loan.total_interest
-    term = loan.term
-    start_date = loan.disbursement_date
+    is_application = hasattr(loan_obj, 'requested_amount') and not hasattr(loan_obj, 'loan_number')
+    
+    product = loan_obj.product
+    
+    if is_application:
+        principal = loan_obj.approved_amount or loan_obj.requested_amount
+        term = loan_obj.approved_term or loan_obj.requested_term
+        start_date = date.today() # Projected
+        
+        # Estimate interest
+        interest_rate = loan_obj.approved_interest_rate or product.interest_rate
+        interest_type = loan_obj.approved_interest_method or product.interest_type
+        
+        total_interest = calculate_interest(
+            principal,
+            interest_rate,
+            term,
+            product.term_unit,
+            interest_type
+        )
+    else:
+        principal = loan_obj.principal_amount
+        total_interest = loan_obj.total_interest
+        term = loan_obj.term
+        start_date = loan_obj.disbursement_date
     
     schedules = []
     
-    if product.interest_type == LoanProduct.InterestType.FLAT:
+    # Determine interest type with robust fallback
+    interest_type = getattr(product, 'interest_type', LoanProduct.InterestType.FLAT)
+    if is_application:
+        interest_type = loan_obj.approved_interest_method or interest_type
+
+    if interest_type == LoanProduct.InterestType.FLAT:
         remaining_principal = principal
         remaining_interest = total_interest
         
@@ -85,12 +110,17 @@ def generate_repayment_schedule(loan):
                 i_due = remaining_interest
             
             schedule = RepaymentSchedule(
-                loan=loan,
                 installment_number=i,
                 due_date=due_date,
                 principal_due=p_due,
                 interest_due=i_due,
+                total_due=p_due + i_due  # Explicitly calculate total
             )
+            if is_application:
+                schedule.application = loan_obj
+            else:
+                schedule.loan = loan_obj
+            
             schedules.append(schedule)
             remaining_principal -= p_due
             remaining_interest -= i_due
@@ -98,11 +128,11 @@ def generate_repayment_schedule(loan):
     else:  # Reducing balance (amortization)
         # Calculate monthly rate
         if product.term_unit == LoanProduct.TermUnit.DAYS:
-            period_rate = (product.interest_rate / Decimal('100')) / Decimal('365')
+            period_rate = (interest_rate / Decimal('100')) / Decimal('365')
         elif product.term_unit == LoanProduct.TermUnit.WEEKS:
-            period_rate = (product.interest_rate / Decimal('100')) / Decimal('52')
+            period_rate = (interest_rate / Decimal('100')) / Decimal('52')
         else:
-            period_rate = (product.interest_rate / Decimal('100')) / Decimal('12')
+            period_rate = (interest_rate / Decimal('100')) / Decimal('12')
         
         # Calculate EMI using formula: P * r * (1+r)^n / ((1+r)^n - 1)
         if period_rate > 0:
@@ -129,13 +159,21 @@ def generate_repayment_schedule(loan):
             if i == term:
                 principal_component = remaining_principal
             
+            p_comp = round(principal_component, 2)
+            i_comp = round(interest_component, 2)
+            
             schedule = RepaymentSchedule(
-                loan=loan,
                 installment_number=i,
                 due_date=due_date,
-                principal_due=round(principal_component, 2),
-                interest_due=round(interest_component, 2),
+                principal_due=p_comp,
+                interest_due=i_comp,
+                total_due=p_comp + i_comp  # Explicitly calculate total
             )
+            if is_application:
+                schedule.application = loan_obj
+            else:
+                schedule.loan = loan_obj
+            
             schedules.append(schedule)
             remaining_principal -= principal_component
     

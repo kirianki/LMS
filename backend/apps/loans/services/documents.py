@@ -1,434 +1,503 @@
 from io import BytesIO
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, cm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from django.conf import settings
 from datetime import date
 import os
+from django.template.loader import render_to_string
+from django.conf import settings
+try:
+    from xhtml2pdf import pisa
+except ImportError:
+    pisa = None
+from apps.tenants.models import DocumentTemplate
 
+def amount_to_words(amount):
+    """Simple number to words converter for Kenyan Shillings."""
+    # This is a basic implementation. For production, consider 'num2words' library.
+    units = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+    teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+    thousands = ["", "thousand", "million", "billion"]
 
-def get_tenant_branding(tenant):
-    """Get comprehensive tenant branding info from TenantSettings."""
-    # Default branding
-    branding = {
-        'company_name': getattr(tenant, 'name', 'Financial Institution'),
-        'tagline': '',
-        'address': 'P.O. Box 12345, Nairobi, Kenya',
-        'postal_address': '',
-        'city': 'Nairobi',
-        'country': 'Kenya',
-        'phone': '+254 700 000 000',
-        'email': 'info@company.co.ke',
-        'website': '',
-        'registration_number': '',
-        'tax_id': '',
-        'logo_path': None,
-        'primary_color': colors.HexColor('#1E3A8A'),  # Default blue
-        'secondary_color': colors.HexColor('#3B82F6'),  # Lighter blue
-        'footer_text': 'This is a computer-generated document. No signature is required.',
-    }
-    
-    # Get from tenant settings if available
-    if hasattr(tenant, 'settings'):
-        s = tenant.settings
-        
-        # Company information
-        if s.company_name:
-            branding['company_name'] = s.company_name
-        if s.company_tagline:
-            branding['tagline'] = s.company_tagline
-        if s.registration_number:
-            branding['registration_number'] = s.registration_number
-        if s.tax_identification:
-            branding['tax_id'] = s.tax_identification
-        if s.website:
-            branding['website'] = s.website
+    def _convert_segment(num):
+        res = ""
+        if num >= 100:
+            res += units[num // 100] + " hundred "
+            num %= 100
+        if num >= 10 and num <= 19:
+            res += teens[num - 10]
+        else:
+            if num >= 20:
+                res += tens[num // 10] + " "
+                num %= 10
+            if num > 0:
+                res += units[num]
+        return res.strip()
+
+    try:
+        whole_part = int(amount)
+        if whole_part == 0:
+            return "zero shillings"
             
-        # Contact information
-        if s.company_address:
-            branding['address'] = s.company_address
-        if s.company_postal_address:
-            branding['postal_address'] = s.company_postal_address
-        if s.company_city:
-            branding['city'] = s.company_city
-        if s.company_country:
-            branding['country'] = s.company_country
-        if s.company_phone:
-            branding['phone'] = s.company_phone
-        if s.company_email:
-            branding['email'] = s.company_email
+        words = []
+        seg_idx = 0
+        while whole_part > 0:
+            seg = whole_part % 1000
+            if seg > 0:
+                seg_words = _convert_segment(seg)
+                if thousands[seg_idx]:
+                    seg_words += " " + thousands[seg_idx]
+                words.insert(0, seg_words)
+            whole_part //= 1000
+            seg_idx += 1
             
-        # Branding assets
-        if s.logo and hasattr(s.logo, 'path'):
-            branding['logo_path'] = s.logo.path
-        if s.primary_color:
-            try:
-                branding['primary_color'] = colors.HexColor(s.primary_color)
-            except:
-                pass  # Keep default if invalid color
-        if s.secondary_color:
-            try:
-                branding['secondary_color'] = colors.HexColor(s.secondary_color)
-            except:
-                pass
-        if s.report_footer_text:
-            branding['footer_text'] = s.report_footer_text
-    
-    return branding
-
-
-def add_branded_header(story, branding, styles, title="DOCUMENT"):
-    """Add a branded header to the PDF story."""
-    # Logo if available
-    if branding['logo_path'] and os.path.exists(branding['logo_path']):
-        try:
-            logo = Image(branding['logo_path'], width=2*inch, height=0.8*inch)
-            story.append(logo)
-            story.append(Spacer(1, 0.2*inch))
-        except:
-            pass  # Skip logo if there's an error
-    
-    # Company name and tagline
-    company_style = ParagraphStyle(
-        'CompanyName',
-        parent=styles['Heading1'],
-        alignment=TA_CENTER,
-        textColor=branding['primary_color'],
-    )
-    story.append(Paragraph(f"<b>{branding['company_name']}</b>", company_style))
-    
-    if branding['tagline']:
-        tagline_style = ParagraphStyle('Tagline', parent=styles['Normal'], alignment=TA_CENTER, fontSize=9, italic=True)
-        story.append(Paragraph(branding['tagline'], tagline_style))
-    
-    # Contact information
-    contact_info = f"{branding['address']}"
-    if branding['postal_address']:
-        contact_info += f" | {branding['postal_address']}"
-    
-    contact_style = ParagraphStyle('Contact', parent=styles['Normal'], alignment=TA_CENTER, fontSize=9)
-    story.append(Paragraph(contact_info, contact_style))
-    story.append(Paragraph(
-        f"Tel: {branding['phone']} | Email: {branding['email']}" + 
-        (f" | Web: {branding['website']}" if branding['website'] else ""),
-        contact_style
-    ))
-    
-    if branding['registration_number'] or branding['tax_id']:
-        reg_info = ""
-        if branding['registration_number']:
-            reg_info += f"Reg No: {branding['registration_number']}"
-        if branding['tax_id']:
-            reg_info += f" | TIN: {branding['tax_id']}" if reg_info else f"TIN: {branding['tax_id']}"
-        story.append(Paragraph(reg_info, contact_style))
-    
-    story.append(Spacer(1, 0.3*inch))
-    
-    # Title
-    title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading2'],
-        alignment=TA_CENTER,
-        textColor=branding['primary_color'],
-    )
-    story.append(Paragraph(f"<b>{title}</b>", title_style))
-    story.append(Spacer(1, 0.3*inch))
-
-
-def add_branded_footer(canvas, doc, branding):
-    """Add a branded footer to each page."""
-    canvas.saveState()
-    canvas.setFont('Times-Roman', 8)
-    canvas.setFillGray(0.5)
-    
-    # Footer text
-    footer_text = branding['footer_text']
-    canvas.drawCentredString(A4[0] / 2, 0.5*cm, footer_text)
-    
-    # Page number
-    page_num = canvas.getPageNumber()
-    canvas.drawRightString(A4[0] - 1*cm, 0.5*cm, f"Page {page_num}")
-    
-    canvas.restoreState()
+        return " ".join(words).strip() + " shillings"
+    except:
+        return str(amount)
 
 
 def generate_offer_letter(loan_application, tenant):
     """
-    Generate a branded PDF offer letter for an approved loan application.
-    
+    Generate a branded PDF offer letter using HTML templates.
     Returns: BytesIO buffer containing PDF
     """
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*cm, bottomMargin=1.5*cm)
+    if not pisa:
+        raise ImportError("xhtml2pdf is not installed.")
+
+    from decimal import Decimal
+    from dateutil.relativedelta import relativedelta
     
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='Center', alignment=TA_CENTER))
-    styles.add(ParagraphStyle(name='Right', alignment=TA_RIGHT))
+    # Try to find an active custom template in DB
+    custom_template = DocumentTemplate.objects.filter(
+        tenant=tenant,
+        template_type='offer_letter',
+        is_active=True
+    ).first()
     
-    branding = get_tenant_branding(tenant)
-    story = []
-    
-    # Add branded header
-    add_branded_header(story, branding, styles, "LOAN OFFER LETTER")
-    
-    # Date and Reference
-    story.append(Paragraph(f"Date: {date.today().strftime('%d %B %Y')}", styles['Right']))
-    story.append(Paragraph(f"Ref: {loan_application.application_number}", styles['Normal']))
-    story.append(Spacer(1, 0.2*inch))
-    
-    # Customer details
-    customer = loan_application.customer
-    story.append(Paragraph(f"<b>To:</b> {customer.first_name} {customer.last_name}", styles['Normal']))
-    story.append(Paragraph(f"ID: {customer.id_number}", styles['Normal']))
-    story.append(Spacer(1, 0.3*inch))
-    
-    # Salutation
-    story.append(Paragraph(f"Dear {customer.first_name},", styles['Normal']))
-    story.append(Spacer(1, 0.2*inch))
-    
-    # Body
-    story.append(Paragraph(
-        f"We are pleased to inform you that your loan application has been <b>APPROVED</b>. "
-        f"Please find below the details of your loan offer:",
-        styles['Normal']
-    ))
-    story.append(Spacer(1, 0.3*inch))
-    
-    # Loan details table with branding colors
+    # Prepare context data
+    borrower = loan_application.borrower
     product = loan_application.product
-    data = [
-        ['Loan Product', product.name],
-        ['Approved Amount', f"KES {loan_application.approved_amount:,.2f}"],
-        ['Loan Term', f"{loan_application.approved_term} {product.get_term_unit_display()}"],
-        ['Interest Rate', f"{loan_application.approved_interest_rate}% {loan_application.get_approved_interest_period_display()} ({loan_application.get_approved_interest_method_display()})"],
-        ['Total Interest', f"KES {loan_application.calculated_interest:,.2f}"],
-        ['Processing Fee', f"KES {loan_application.processing_fee:,.2f}"],
-    ]
-    
-    table = Table(data, colWidths=[2.5*inch, 3*inch])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, -1), branding['secondary_color']),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.white),
-        ('GRID', (0, 0), (-1, -1), 1, branding['primary_color']),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('PADDING', (0, 0), (-1, -1), 8),
-    ]))
-    story.append(table)
-    story.append(Spacer(1, 0.3*inch))
-    
-    # Deductions section
     deductions = loan_application.deductions.all()
-    if deductions:
-        story.append(Spacer(1, 0.2*inch))
-        story.append(Paragraph("<b>Deductions & Fees:</b>", styles['Normal']))
+    
+    total_deductions = sum(d.calculated_amount for d in deductions) if deductions else Decimal('0.00')
+    net_disbursement = loan_application.approved_amount - total_deductions
+    total_repayable = loan_application.approved_amount + loan_application.calculated_interest
+    
+    if product.term_unit == 'months':
+        payment_frequency = 'Monthly'
+        first_payment_date = date.today() + relativedelta(months=1)
+        final_payment_date = date.today() + relativedelta(months=loan_application.approved_term)
+    elif product.term_unit == 'weeks':
+        payment_frequency = 'Weekly'
+        first_payment_date = date.today() + relativedelta(weeks=1)
+        final_payment_date = date.today() + relativedelta(weeks=loan_application.approved_term)
+    else:  # days
+        payment_frequency = 'Daily'
+        first_payment_date = date.today() + relativedelta(days=1)
+        final_payment_date = date.today() + relativedelta(days=loan_application.approved_term)
+    
+    first_schedule = loan_application.provisional_schedules.order_by('due_date').first()
+    if first_schedule:
+        # Calculate dynamically to ensure correctness even if DB total_due is 0
+        installment_amount = first_schedule.principal_due + first_schedule.interest_due
+    else:
+        installment_amount = (total_repayable / loan_application.approved_term if loan_application.approved_term > 0 else Decimal('0.00'))
+    
+    def format_money(val):
+        return "{:,.2f}".format(val or Decimal('0.00'))
+    
+    def format_date_long(d):
+        if not d: return "N/A"
+        # 29th JANUARY 2026
+        day = d.day
+        suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+        return f"{day}{suffix} {d.strftime('%B %Y').upper()}"
+
+    def format_date_short(d):
+        # 29 Jan 2026
+        return d.strftime("%d %b %Y") if d else "N/A"
+
+    # Pre-calculate ALL scalar strings
+    ctx_today = format_date_long(date.today())
+    ctx_borrower_name = (borrower.name or "Valued Customer").upper()
+    ctx_borrower_id = f"{borrower.id_number or 'N/A'}"
+    if borrower.borrower_type in ['company', 'institution']:
+        ctx_borrower_id += f" ({borrower.get_borrower_type_display().upper()})"
+    else:
+        ctx_borrower_id += f" ({borrower.get_id_type_display().upper()})"
         
-        deduction_data = [['Description', 'Method', 'Amount']]
-        for d in deductions:
-            deduction_data.append([
-                d.name,
-                d.get_charge_method_display(),
-                f"KES {d.calculated_amount:,.2f}"
-            ])
+    ctx_address = borrower.physical_address or "As per application records"
+    
+    # Pre-calculate lists (Deductions)
+    fmt_deductions = []
+    for d in deductions:
+        fmt_deductions.append({
+            'name': d.name or "Fee",
+            'method': d.get_charge_method_display(),
+            'amount': format_money(d.calculated_amount)
+        })
         
-        total_deduction = sum(d.calculated_amount for d in deductions)
-        deduction_data.append(['<b>Total Deductions</b>', '', f"<b>KES {total_deduction:,.2f}</b>"])
-        deduction_data.append(['<b>Net Disbursement</b>', '', f"<b>KES {loan_application.approved_amount - total_deduction:,.2f}</b>"])
+    # Pre-calculate lists (Schedules)
+    provisional_schedules = loan_application.provisional_schedules.all().order_by('due_date')
+    fmt_schedules = []
+    for s in provisional_schedules:
+        total_val = s.principal_due + s.interest_due
+        fmt_schedules.append({
+            'number': str(s.installment_number),
+            'due_date': format_date_short(s.due_date),
+            'principal': format_money(s.principal_due),
+            'interest': format_money(s.interest_due),
+            'total': format_money(total_val)
+        })
+
+    # Collateral
+    collateral = getattr(loan_application, 'collateral', None)
+    if collateral:
+        # Build description based on available fields
+        c_name = "Asset"
+        if collateral.make and collateral.model:
+            c_name = f"{collateral.make} {collateral.model}"
+        elif collateral.description:
+            c_name = collateral.description
         
-        deduction_table = Table(deduction_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
-        deduction_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), branding['secondary_color']),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
-        ]))
-        story.append(deduction_table)
+        ctx_collateral_desc = f"{collateral.get_collateral_type_display()} - {c_name.upper()}"
+        ctx_collateral_id = collateral.reg_number or collateral.lr_number or collateral.registration_number or "N/A"
+    else:
+        ctx_collateral_desc = "UNSECURED"
+        ctx_collateral_id = "N/A"
+
+    # Institutional Contact
+    primary_contact = None
+    is_company = borrower.borrower_type in ['company', 'institution', 'group']
+    if is_company:
+        primary_contact = borrower.contacts.filter(is_primary=True).first()
+
+    # Pre-formatted Strings (Zero Logic)
+    loan_officer = getattr(borrower, 'loan_officer', None)
+    officer_name = f"{loan_officer.first_name} {loan_officer.last_name}".upper() if loan_officer else "AUTHORIZED SIGNATORY"
     
-    story.append(Spacer(1, 0.3*inch))
+    context = {
+        # Raw objects (only for simple lookups if absolutely needed, but prefer strings)
+        'tenant': tenant,
+        'tenant_settings': getattr(tenant, 'settings', None),
+        
+        # PRE-FORMATTED STRINGS (ZERO LOGIC)
+        'date_letter': ctx_today,
+        'app_ref': loan_application.application_number or "N/A",
+        
+        'loan_officer_name': officer_name,
+        
+        'borrower_name': ctx_borrower_name,
+        'borrower_id': ctx_borrower_id,
+        'footer_id_val': ctx_borrower_id, # explicit alias for footer
+        'borrower_phone': borrower.phone_number or "Not Provided",
+        'borrower_address': ctx_address,
+        'borrower_email': borrower.email or "N/A",
+        
+        'product_name': product.name.upper(),
+        'approved_principal': format_money(loan_application.approved_amount),
+        'interest_rate_str': f"{loan_application.approved_interest_rate or 0}% {loan_application.get_approved_interest_period_display()}",
+        'interest_method': loan_application.get_approved_interest_method_display().title(),
+        'term_str': f"{loan_application.approved_term} {product.get_term_unit_display()}",
+        'installment_amount': format_money(installment_amount),
+        'frequency': payment_frequency,
+        'repayment_channel': loan_application.get_repayment_channel_display().upper(),
+        
+        'deductions_list': fmt_deductions,
+        'net_disbursement': format_money(net_disbursement),
+        'total_repayable': format_money(total_repayable),
+        'amount_words': amount_to_words(loan_application.approved_amount).upper(),
+        
+        'schedules_list': fmt_schedules,
+        
+        'has_collateral': bool(collateral),
+        'collateral_desc': ctx_collateral_desc,
+        'collateral_id': ctx_collateral_id,
+        
+        'is_company': is_company,
+        'contact_name': f"{primary_contact.first_name} {primary_contact.last_name}".upper() if primary_contact else "AUTHORIZED SIGNATORY",
+        'contact_designation': (primary_contact.designation or "Director").upper() if primary_contact else "DIRECTOR",
+        
+        'company_name': (getattr(tenant, 'name', '') or 'LENDER').upper(),
+        # Add settings fallbacks if tenant_settings is missing
+    }
     
-    # Terms and conditions
-    story.append(Paragraph("<b>Terms and Conditions:</b>", styles['Normal']))
-    story.append(Paragraph("1. This offer is valid for 14 days from the date of this letter.", styles['Normal']))
-    story.append(Paragraph("2. Loan disbursement is subject to completion of all required documentation.", styles['Normal']))
-    story.append(Paragraph("3. Late payments will attract a penalty as stated in the product guide.", styles['Normal']))
-    story.append(Paragraph("4. The borrower agrees to the loan terms upon acceptance.", styles['Normal']))
-    story.append(Spacer(1, 0.4*inch))
+    # Mix in tenant settings defaults safely
+    ts = context['tenant_settings']
+    context.update({
+        'company_name': (ts.company_name if ts and ts.company_name else tenant.name).upper(),
+        'company_address': ts.company_address if ts and ts.company_address else "Address Not Provided",
+        'company_phone': ts.company_phone if ts and ts.company_phone else "N/A",
+        'company_email': ts.company_email if ts and ts.company_email else "N/A",
+        'company_tagline': ts.company_tagline if ts and ts.company_tagline else "Your Financial Growth Partner",
+        'primary_color': ts.primary_color if ts and ts.primary_color else '#1a365d',
+        'secondary_color': ts.secondary_color if ts and ts.secondary_color else '#475569',
+        'logo_path': ts.logo.path if ts and ts.logo else '',
+    })
     
-    # Acceptance section
-    story.append(Paragraph("<b>ACCEPTANCE</b>", styles['Heading3']))
-    story.append(Paragraph(
-        "I, the undersigned, hereby accept the above loan offer and agree to abide by the terms and conditions.",
-        styles['Normal']
-    ))
-    story.append(Spacer(1, 0.4*inch))
+    if custom_template:
+        from django.template import Template, Context
+        template = Template(custom_template.content)
+        html_content = template.render(Context(context))
+    else:
+        # Use default filesystem template
+        html_content = render_to_string('default_offer_letter.html', context)
     
-    # Signature lines
-    sig_data = [
-        ['_________________________', '_________________________'],
-        ['Borrower Signature', 'Date'],
-        ['', ''],
-        ['_________________________', '_________________________'],
-        ['Witness Signature', 'Date'],
-    ]
-    sig_table = Table(sig_data, colWidths=[2.5*inch, 2.5*inch])
-    story.append(sig_table)
+    buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(html_content, dest=buffer)
     
-    # Build PDF with footer
-    doc.build(story, onFirstPage=lambda c, d: add_branded_footer(c, d, branding),
-              onLaterPages=lambda c, d: add_branded_footer(c, d, branding))
-    buffer.seek(0)
-    return buffer
+    if not pisa_status.err:
+        buffer.seek(0)
+        return buffer
+    else:
+        raise Exception(f"PDF generation failed: {pisa_status.err}")
 
 
 def generate_loan_statement(loan, tenant):
     """
-    Generate a branded PDF loan statement showing payment history.
-    
-    Returns: BytesIO buffer containing PDF
+    Generate a branded PDF loan statement using HTML templates.
     """
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*cm, bottomMargin=1.5*cm)
+    if not pisa:
+        raise ImportError("xhtml2pdf is not installed.")
+
+    def format_money(val):
+        return "{:,.2f}".format(val or Decimal('0.00'))
     
-    styles = getSampleStyleSheet()
-    branding = get_tenant_branding(tenant)
-    story = []
+    def format_date_short(d):
+        return d.strftime("%d %b %Y") if d else "N/A"
+
+    borrower = loan.borrower
     
-    # Add branded header
-    add_branded_header(story, branding, styles, "LOAN STATEMENT")
-    
-    story.append(Paragraph(f"Generated: {date.today().strftime('%d %B %Y')}", styles['Normal']))
-    story.append(Spacer(1, 0.2*inch))
-    
-    # Loan summary
-    customer = loan.customer
-    story.append(Paragraph(f"<b>Borrower:</b> {customer.first_name} {customer.last_name}", styles['Normal']))
-    story.append(Paragraph(f"<b>Loan Number:</b> {loan.loan_number}", styles['Normal']))
-    story.append(Paragraph(f"<b>Disbursement Date:</b> {loan.disbursement_date.strftime('%d %B %Y')}", styles['Normal']))
-    story.append(Paragraph(f"<b>Maturity Date:</b> {loan.maturity_date.strftime('%d %B %Y')}", styles['Normal']))
-    story.append(Spacer(1, 0.2*inch))
-    
-    # Balance summary with branding colors
-    summary_data = [
-        ['Principal Amount', f"KES {loan.principal_amount:,.2f}"],
-        ['Total Interest', f"KES {loan.total_interest:,.2f}"],
-        ['Total Fees', f"KES {loan.total_fees:,.2f}"],
-        ['Outstanding Balance', f"KES {loan.outstanding_balance:,.2f}"],
-    ]
-    summary_table = Table(summary_data, colWidths=[2.5*inch, 2*inch])
-    summary_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, -1), branding['secondary_color']),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.white),
-        ('GRID', (0, 0), (-1, -1), 1, branding['primary_color']),
-        ('PADDING', (0, 0), (-1, -1), 6),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-    ]))
-    story.append(summary_table)
-    story.append(Spacer(1, 0.3*inch))
-    
-    # Payment history
-    story.append(Paragraph("<b>Payment History</b>", styles['Heading3']))
-    
-    payments = loan.repayments.all().order_by('payment_date')
-    if payments:
-        payment_data = [['Date', 'Amount', 'Method', 'Reference']]
-        for p in payments:
-            payment_data.append([
-                p.payment_date.strftime('%d/%m/%Y'),
-                f"KES {p.amount:,.2f}",
-                p.get_payment_method_display(),
-                p.reference_number or '-',
-            ])
+    # Pre-calculate Lists (Transactions)
+    fmt_repayments = []
+    for p in loan.repayments.all().order_by('payment_date'):
+        fmt_repayments.append({
+            'date': format_date_short(p.payment_date),
+            'description': "Loan Repayment",
+            'reference': p.reference_number or "-",
+            'amount': f"({format_money(p.amount)})"
+        })
+
+    context = {
+        'tenant': tenant,
+        'tenant_settings': getattr(tenant, 'settings', None),
         
-        payment_table = Table(payment_data, colWidths=[1.2*inch, 1.5*inch, 1.5*inch, 1.5*inch])
-        payment_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), branding['primary_color']),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('GRID', (0, 0), (-1, -1), 1, branding['primary_color']),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('PADDING', (0, 0), (-1, -1), 6),
-        ]))
-        story.append(payment_table)
-    else:
-        story.append(Paragraph("No payments recorded yet.", styles['Normal']))
+        # Zero Logic Variables
+        'today_date': date.today().strftime("%d %b %Y"),
+        'borrower_name': (borrower.name or "Valued Customer").upper(),
+        'loan_number': loan.loan_number or "N/A",
+        
+        'principal': format_money(loan.principal_amount),
+        'disbursed_date': format_date_short(loan.disbursement_date),
+        'outstanding_balance': format_money(loan.outstanding_balance),
+        
+        'disb_date_str': format_date_short(loan.disbursement_date),
+        'disb_ref': loan.disbursement_reference or "Initial Account",
+        'disb_amount': format_money(loan.principal_amount),
+        
+        'repayments_list': fmt_repayments,
+    }
     
-    # Build PDF with footer
-    doc.build(story, onFirstPage=lambda c, d: add_branded_footer(c, d, branding),
-              onLaterPages=lambda c, d: add_branded_footer(c, d, branding))
-    buffer.seek(0)
-    return buffer
-
-
-def generate_disbursement_letter(loan, tenant):
-    """
-    Generate a branded PDF disbursement letter confirming the funds release.
+    # Mix in tenant settings defaults safely
+    ts = context['tenant_settings']
+    context.update({
+        'company_name': (ts.company_name if ts and ts.company_name else tenant.name).upper(),
+        'company_phone': ts.company_phone if ts and ts.company_phone else "N/A",
+        'footer_text': ts.report_footer_text if ts and ts.report_footer_text else "Financial Excellence & Integrity",
+        'primary_color': ts.primary_color if ts and ts.primary_color else '#1a365d',
+        'logo_path': ts.logo.path if ts and ts.logo else '',
+    })
     
-    Returns: BytesIO buffer containing PDF
-    """
+    html_content = render_to_string('default_loan_statement.html', context)
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*cm, bottomMargin=1.5*cm)
+    pisa_status = pisa.CreatePDF(html_content, dest=buffer)
     
-    styles = getSampleStyleSheet()
-    branding = get_tenant_branding(tenant)
-    story = []
+    if not pisa_status.err:
+        buffer.seek(0)
+        return buffer
+    else:
+        raise Exception(f"PDF generation failed: {pisa_status.err}")
+
+
+def generate_disbursement_letter(loan_obj, tenant):
+    """
+    Generate a branded PDF disbursement letter using HTML templates.
+    Handles both Loan (final) and LoanApplication (provisional authorization).
+    """
+    if not pisa:
+        raise ImportError("xhtml2pdf is not installed.")
+
+    def format_money(val):
+        return "{:,.2f}".format(val or Decimal('0.00'))
     
-    # Add branded header
-    add_branded_header(story, branding, styles, "LOAN DISBURSEMENT ADVICE")
+    def format_date_long(d):
+        if not d: return "N/A"
+        day = d.day
+        suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+        return f"{day}{suffix} {d.strftime('%B %Y').upper()}"
+
+    def format_date_short(d):
+        return d.strftime("%d %b %Y") if d else "N/A"
+
+    is_app = hasattr(loan_obj, 'requested_amount')
+    borrower = loan_obj.borrower
     
-    # Date and Reference
-    story.append(Paragraph(f"Date: {date.today().strftime('%d %B %Y')}", styles['Right'] if 'Right' in styles else styles['Normal']))
-    story.append(Paragraph(f"Loan No: {loan.loan_number}", styles['Normal']))
-    story.append(Spacer(1, 0.2*inch))
+    if is_app:
+        first_schedule = loan_obj.provisional_schedules.all().order_by('due_date').first()
+        disb_date = date.today() # Projected
+        net_amount = (loan_obj.approved_amount or Decimal('0.00')) - sum(d.calculated_amount for d in loan_obj.deductions.all())
+        method_str = "TBD"
+        loan_ref = loan_obj.application_number
+    else:
+        first_schedule = loan_obj.schedules.all().order_by('due_date').first()
+        disb_date = loan_obj.disbursement_date
+        net_amount = loan_obj.disbursed_amount
+        method_str = loan_obj.get_disbursement_method_display().upper()
+        loan_ref = loan_obj.loan_number or "N/A"
+
+    # Resolve Name and ID based on type
+    is_company = borrower.borrower_type in ['company', 'institution']
+    if is_company:
+        ctx_borrower_name = (borrower.business_name or borrower.name or "Valued Institution").upper()
+        ctx_borrower_id = borrower.tax_id or borrower.id_number or "N/A"
+    else:
+        ctx_borrower_name = f"{borrower.first_name} {borrower.last_name}".upper()
+        ctx_borrower_id = f"{borrower.id_number} (NATIONAL ID)" if borrower.id_number else "N/A"
+
+    # Get Primary contact for companies
+    contact_name = "____________________"
+    contact_designation = "____________________"
+    if is_company:
+        primary_contact = borrower.contacts.filter(is_primary=True).first()
+        if primary_contact:
+            contact_name = f"{primary_contact.first_name} {primary_contact.last_name}".upper()
+            contact_designation = (primary_contact.designation or "Director").upper()
+
+    # Get Loan Officer
+    loan_officer = getattr(borrower, 'loan_officer', None)
+    officer_name = f"{loan_officer.first_name} {loan_officer.last_name}".upper() if loan_officer else "AUTHORIZED SIGNATORY"
+
+    # Dynamic installment calculation
+    if first_schedule:
+        inst_val = first_schedule.principal_due + first_schedule.interest_due
+    else:
+        inst_val = Decimal('0.00')
+
+    context = {
+        'tenant': tenant,
+        'tenant_settings': getattr(tenant, 'settings', None),
+        
+        # PRE-FORMATTED STRINGS
+        'letter_date': format_date_long(date.today()),
+        'loan_ref': loan_ref,
+        'borrower_name': ctx_borrower_name,
+        'borrower_id': ctx_borrower_id,
+        'footer_id_val': ctx_borrower_id,
+        
+        'is_company': is_company,
+        'contact_name': contact_name,
+        'contact_designation': contact_designation,
+        'loan_officer_name': officer_name,
+        
+        'disb_date': format_date_short(disb_date),
+        'method': method_str,
+        'net_amount': format_money(net_amount),
+        'installment_amount': format_money(inst_val),
+        'first_due_date': format_date_long(first_schedule.due_date) if first_schedule else "N/A",
+        'repayment_channel': loan_obj.get_repayment_channel_display().upper(),
+    }
     
-    # Customer details
-    customer = loan.customer
-    story.append(Paragraph(f"<b>Borrower:</b> {customer.first_name} {customer.last_name}", styles['Normal']))
-    story.append(Spacer(1, 0.3*inch))
+    # Mix in tenant settings defaults safely
+    ts = context['tenant_settings']
+    context.update({
+        'company_name': (ts.company_name if ts and ts.company_name else tenant.name).upper(),
+        'company_address': ts.company_address if ts and ts.company_address else "Address Not Provided",
+        'company_phone': ts.company_phone if ts and ts.company_phone else "N/A",
+        'company_email': ts.company_email if ts and ts.company_email else "support@" + tenant.name.lower().replace(' ', '') + ".com",
+        'company_tagline': ts.company_tagline if ts and ts.company_tagline else "Your Financial Growth Partner",
+        'primary_color': ts.primary_color if ts and ts.primary_color else '#1a365d',
+        'secondary_color': ts.secondary_color if ts and ts.secondary_color else '#64748b',
+        'logo_path': ts.logo.path if ts and ts.logo else '',
+    })
     
-    story.append(Paragraph(
-        f"This is to confirm that the following loan has been disbursed as per your accepted offer letter. "
-        f"The funds have been released via <b>{loan.get_disbursement_method_display()}</b>.",
-        styles['Normal']
-    ))
-    story.append(Spacer(1, 0.3*inch))
+    html_content = render_to_string('default_disbursement_letter.html', context)
+    buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(html_content, dest=buffer)
     
-    # Disbursement Breakdown
-    data = [
-        ['Principal Amount', f"KES {loan.principal_amount:,.2f}"],
-        ['Total Fees & Deductions', f"KES {loan.total_fees:,.2f}"],
-        ['Net Disbursed Amount', f"KES {loan.disbursed_amount:,.2f}"],
-        ['Disbursement Date', loan.disbursement_date.strftime('%d %B %Y')],
-        ['First Payment Date', loan.schedules.all().order_by('due_date').first().due_date.strftime('%d %B %Y')],
-    ]
+    if not pisa_status.err:
+        buffer.seek(0)
+        return buffer
+    else:
+        raise Exception(f"PDF generation failed: {pisa_status.err}")
+
+
+def render_document_preview(template_obj, tenant):
+    """
+    Generate a preview of a document template using mock data.
+    """
+    if not pisa:
+        return None
+
+    from decimal import Decimal
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+    from django.template import Template, Context
     
-    table = Table(data, colWidths=[2.5*inch, 3*inch])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, -1), branding['secondary_color']),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.white),
-        ('GRID', (0, 0), (-1, -1), 1, branding['primary_color']),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('PADDING', (0, 0), (-1, -1), 8),
-    ]))
-    story.append(table)
-    story.append(Spacer(1, 0.4*inch))
+    # Mock context data
+    context = {
+        'application': {
+            'application_number': 'APP202601-PREVIEW',
+            'submitted_at': date.today(),
+            'approved_amount': Decimal('500000.00'),
+            'approved_term': 12,
+            'approved_interest_rate': Decimal('12.50'),
+            'get_approved_interest_method_display': 'Reducing Balance',
+            'get_approved_interest_period_display': 'Per Annum',
+            'purpose': 'Business Expansion & Inventory Purchase',
+            'disbursement_method': 'Bank Transfer',
+        },
+        'borrower': {
+            'name': 'JOHN DOE ENTERPRISES',
+            'physical_address': 'Plot 123, Financial District, Nairobi',
+            'id_number': 'PVT-ABC12345',
+            'phone_number': '+254 711 222 333',
+        },
+        'product': {
+            'name': 'SME Platinum Loan',
+            'get_term_unit_display': 'Months',
+        },
+        'tenant': tenant,
+        'tenant_settings': getattr(tenant, 'settings', None),
+        'today': date.today(),
+        'deductions': [
+            {'name': 'Processing Fee', 'calculated_amount': Decimal('5000.00')},
+            {'name': 'Insurance Premium', 'calculated_amount': Decimal('2500.00')},
+        ],
+        'total_deductions': Decimal('7500.00'),
+        'net_disbursement': Decimal('492500.00'),
+        'total_repayable': Decimal('562500.00'),
+        'installment_amount': Decimal('46875.00'),
+        'payment_frequency': 'Monthly',
+        'approved_amount_words': 'five hundred thousand shillings only',
+        'first_payment_date': date.today() + relativedelta(months=1),
+        'final_payment_date': date.today() + relativedelta(months=12),
+    }
     
-    story.append(Paragraph(
-        "Please ensure timely repayments to maintain a good credit score and qualify for future facilities.",
-        styles['Normal']
-    ))
-    story.append(Spacer(1, 0.4*inch))
+    # Handle object conversion for template
+    class MockObj:
+        def __init__(self, **entries):
+            self.__dict__.update(entries)
     
-    story.append(Paragraph("Authorized Signature:", styles['Normal']))
-    story.append(Spacer(1, 0.5*inch))
-    story.append(Paragraph("_________________________", styles['Normal']))
-    story.append(Paragraph(f"Loans Department, {branding['company_name']}", styles['Normal']))
+    context['application'] = MockObj(**context['application'])
+    context['borrower'] = MockObj(**context['borrower'])
+    context['product'] = MockObj(**context['product'])
     
-    # Build PDF with footer
-    doc.build(story, onFirstPage=lambda c, d: add_branded_footer(c, d, branding),
-              onLaterPages=lambda c, d: add_branded_footer(c, d, branding))
-    buffer.seek(0)
-    return buffer
+    # Render template
+    template = Template(template_obj.content)
+    html_content = template.render(Context(context))
+    
+    # Convert HTML to PDF
+    buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(html_content, dest=buffer)
+    if not pisa_status.err:
+        buffer.seek(0)
+        return buffer
+    return None

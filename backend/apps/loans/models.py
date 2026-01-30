@@ -27,6 +27,12 @@ class LoanProduct(models.Model):
     name = models.CharField(max_length=100)
     code = models.CharField(max_length=20, unique=True)
     description = models.TextField(blank=True)
+    interest_type = models.CharField(
+        max_length=20,
+        choices=InterestType.choices,
+        default=InterestType.FLAT,
+        help_text="Calculation method for interest"
+    )
     
     # Amount limits
     min_amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -104,7 +110,7 @@ class LoanApplication(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     application_number = models.CharField(max_length=50, unique=True, blank=True)
     
-    customer = models.ForeignKey('customers.Customer', on_delete=models.CASCADE, related_name='loan_applications')
+    borrower = models.ForeignKey('customers.Borrower', on_delete=models.CASCADE, related_name='loan_applications')
     product = models.ForeignKey(LoanProduct, on_delete=models.PROTECT, related_name='applications')
     
     # Requested amounts
@@ -180,7 +186,7 @@ class LoanApplication(models.Model):
     # Risk Assessment
     credit_score_at_application = models.IntegerField(
         null=True, blank=True,
-        help_text="Customer's credit score at time of application"
+        help_text="Borrower's credit score at time of application"
     )
     risk_category = models.CharField(
         max_length=20,
@@ -198,10 +204,24 @@ class LoanApplication(models.Model):
     valuation_fee = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     discharge_fee = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     
+    # Repayment
+    repayment_channel = models.CharField(
+        max_length=20,
+        choices=[
+            ('mpesa', 'M-Pesa'),
+            ('bank', 'Bank Transfer'),
+            ('cash', 'Cash/In-Person'),
+        ],
+        default='mpesa',
+        help_text="Primary channel for loan repayments"
+    )
+
     # Documents
     offer_letter_file = models.FileField(upload_to='loan_offers/', null=True, blank=True)
     signed_offer_letter = models.FileField(upload_to='signed_offers/', null=True, blank=True)
     disbursement_letter_file = models.FileField(upload_to='disbursement_letters/', null=True, blank=True)
+    signed_disbursement_letter = models.FileField(upload_to='signed_disbursements/', null=True, blank=True)
+    disbursement_details = models.JSONField(default=dict, blank=True, help_text="Payment details used for disbursement (e.g. M-Pesa number, Bank account)")
 
     # Collateral
     collateral = models.ForeignKey(
@@ -235,7 +255,7 @@ class LoanApplication(models.Model):
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.application_number} - {self.customer}"
+        return f"{self.application_number} - {self.borrower}"
 
 
 class Loan(models.Model):
@@ -254,11 +274,17 @@ class Loan(models.Model):
         DAYS_61_90 = '61-90', '61-90 Days'
         DAYS_90_PLUS = '90+', '90+ Days'
     
+    class DisbursementStatus(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        PROCESSING = 'processing', 'Processing'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     loan_number = models.CharField(max_length=50, unique=True, blank=True)
     
     application = models.OneToOneField(LoanApplication, on_delete=models.PROTECT, related_name='loan')
-    customer = models.ForeignKey('customers.Customer', on_delete=models.CASCADE, related_name='loans')
+    borrower = models.ForeignKey('customers.Borrower', on_delete=models.CASCADE, related_name='loans')
     product = models.ForeignKey(LoanProduct, on_delete=models.PROTECT, related_name='loans')
     
     # Principal and calculated amounts
@@ -269,8 +295,39 @@ class Loan(models.Model):
     # Disbursement
     disbursed_amount = models.DecimalField(max_digits=12, decimal_places=2)
     disbursement_date = models.DateField()
-    disbursement_method = models.CharField(max_length=20, default='mpesa')
-    disbursement_reference = models.CharField(max_length=100, blank=True)
+    disbursement_method = models.CharField(
+        max_length=20, 
+        choices=[
+            ('cash', 'Cash'),
+            ('mpesa', 'M-Pesa'),
+            ('bank_transfer', 'Bank Transfer'),
+            ('cheque', 'Cheque'),
+        ],
+        default='mpesa'
+    )
+    disbursement_reference = models.CharField(max_length=100, blank=True, help_text="API transaction ID or manual reference code")
+    disbursement_details = models.JSONField(default=dict, blank=True, help_text="Payment details used for disbursement (verified at time of payment)")
+    disbursement_status = models.CharField(
+        max_length=20,
+        choices=DisbursementStatus.choices,
+        default=DisbursementStatus.PENDING,
+        help_text="Status of the disbursement process"
+    )
+    disbursement_proof = models.FileField(
+        upload_to='disbursements/proof/',
+        null=True,
+        blank=True,
+        help_text="Upload receipt/screenshot for manual disbursement verification"
+    )
+    repayment_channel = models.CharField(
+        max_length=20,
+        choices=[
+            ('mpesa', 'M-Pesa'),
+            ('bank', 'Bank Transfer'),
+            ('cash', 'Cash/In-Person'),
+        ],
+        default='mpesa'
+    )
     
     # Term
     term = models.PositiveIntegerField()
@@ -330,7 +387,7 @@ class Loan(models.Model):
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.loan_number} - {self.customer}"
+        return f"{self.loan_number} - {self.borrower}"
 
 
 class RepaymentSchedule(models.Model):
@@ -343,7 +400,8 @@ class RepaymentSchedule(models.Model):
         OVERDUE = 'overdue', 'Overdue'
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    loan = models.ForeignKey(Loan, on_delete=models.CASCADE, related_name='schedules')
+    loan = models.ForeignKey(Loan, on_delete=models.CASCADE, related_name='schedules', null=True, blank=True)
+    application = models.ForeignKey('LoanApplication', on_delete=models.CASCADE, related_name='provisional_schedules', null=True, blank=True)
     
     installment_number = models.PositiveIntegerField(default=1)
     due_date = models.DateField()
@@ -528,7 +586,7 @@ class CollectionNote(models.Model):
     contact_method = models.CharField(max_length=20, choices=ContactMethod.choices)
     
     note = models.TextField(help_text="Details of the collection activity")
-    customer_response = models.TextField(blank=True, help_text="Customer's response or commitment")
+    customer_response = models.TextField(blank=True, help_text="Borrower's response or commitment")
     
     created_at = models.DateTimeField(default=timezone.now)
     
@@ -542,7 +600,7 @@ class CollectionNote(models.Model):
 
 
 class PromiseToPay(models.Model):
-    """Track customer payment promises and their fulfillment."""
+    """Track borrower payment promises and their fulfillment."""
     
     class Status(models.TextChoices):
         PENDING = 'pending', 'Pending'
@@ -637,7 +695,7 @@ class LoanDeduction(models.Model):
 
     def save(self, *args, **kwargs):
         if self.charge_method == self.ChargeMethod.PERCENTAGE:
-            self.calculated_amount = (self.application.approved_amount or self.application.requested_amount) * (self.value / Decimal('100.00'))
+            self.calculated_amount = (self.application.approved_amount or self.application.requested_amount) * (Decimal(str(self.value)) / Decimal('100.00'))
         else:
             self.calculated_amount = self.value
         super().save(*args, **kwargs)
@@ -652,9 +710,9 @@ class LoanGuarantor(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     application = models.ForeignKey(LoanApplication, on_delete=models.CASCADE, related_name='guarantors')
     
-    # Can be an existing customer or an external person
-    customer = models.ForeignKey(
-        'customers.Customer', 
+    # Can be an existing borrower or an external person
+    borrower = models.ForeignKey(
+        'customers.Borrower', 
         on_delete=models.SET_NULL, 
         null=True, 
         blank=True, 

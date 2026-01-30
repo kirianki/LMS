@@ -9,7 +9,7 @@ class SavingsProductAdmin(SimpleHistoryAdmin):
 
 @admin.register(SavingsAccount)
 class SavingsAccountAdmin(SimpleHistoryAdmin):
-    list_display = ('account_number', 'customer', 'product', 'current_balance', 'status')
+    list_display = ('account_number', 'borrower', 'product', 'current_balance', 'status')
     list_filter = ('status', 'product')
     search_fields = ('account_number', 'customer__first_name', 'customer__last_name')
     readonly_fields = ('account_number', 'current_balance', 'accrued_interest')

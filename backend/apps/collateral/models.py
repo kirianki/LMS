@@ -24,8 +24,8 @@ class Collateral(models.Model):
         LEASEHOLD = 'leasehold', 'Leasehold'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    customer = models.ForeignKey(
-        'customers.Customer', 
+    borrower = models.ForeignKey(
+        'customers.Borrower', 
         on_delete=models.CASCADE, 
         related_name='collaterals'
     )
@@ -128,19 +128,6 @@ class ValuationRequest(models.Model):
     def __str__(self):
         return f"Request for {self.collateral} to {self.valuer}"
 
-class EmailConfiguration(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    smtp_host = models.CharField(max_length=255)
-    smtp_port = models.IntegerField(default=587)
-    smtp_user = models.CharField(max_length=255)
-    smtp_password = models.CharField(max_length=255) # In real app, encrypt this!
-    use_tls = models.BooleanField(default=True)
-    from_email = models.EmailField()
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"SMTP Config for {self.from_email}"
 
 class ValuationReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

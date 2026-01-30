@@ -1,9 +1,13 @@
 from rest_framework import serializers
-from .models import Collateral, Valuer, EmailConfiguration, ValuationRequest, ValuationReport
+from .models import Collateral, Valuer, ValuationRequest, ValuationReport
 
 class CollateralSerializer(serializers.ModelSerializer):
-    customer_name = serializers.ReadOnlyField(source='customer.first_name')
-    customer_last_name = serializers.ReadOnlyField(source='customer.last_name')
+    borrower_name = serializers.SerializerMethodField()
+
+    def get_borrower_name(self, obj):
+        if obj.borrower.borrower_type in ['company', 'institution']:
+            return obj.borrower.business_name
+        return f"{obj.borrower.first_name} {obj.borrower.last_name}"
     valuer_name = serializers.ReadOnlyField(source='valuer.name')
     
     class Meta:
@@ -44,13 +48,6 @@ class ValuerSerializer(serializers.ModelSerializer):
         model = Valuer
         fields = '__all__'
 
-class EmailConfigurationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmailConfiguration
-        fields = '__all__'
-        extra_kwargs = {
-            'smtp_password': {'write_only': True}
-        }
 
 class ValuationRequestSerializer(serializers.ModelSerializer):
     valuer_name = serializers.ReadOnlyField(source='valuer.name')

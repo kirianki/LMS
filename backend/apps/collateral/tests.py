@@ -120,20 +120,24 @@ class CollateralTests(TenantTestCase):
 
     def test_automated_valuation_workflow(self):
         """Test that creating collateral triggers valuer emails and requests."""
-        from apps.collateral.models import Valuer, EmailConfiguration, ValuationRequest
+        from apps.collateral.models import Valuer, ValuationRequest
+        from apps.tenants.models import TenantSettings
         from django.core import mail
 
-        # 1. Setup trusted valuer and SMTP config
+        # 1. Setup trusted valuer and SMTP config in TenantSettings
         valuer = Valuer.objects.create(
             name="Swift Valuers",
             email="swift@valuers.com",
             valuation_types=["motor_vehicle"]
         )
-        EmailConfiguration.objects.create(
-            smtp_host="smtp.test.com",
-            smtp_user="test@tenant.com",
-            smtp_password="pwd",
-            from_email="noreply@tenant.com"
+        TenantSettings.objects.update_or_create(
+            tenant=self.tenant,
+            defaults={
+                'smtp_host': "smtp.test.com",
+                'smtp_username': "test@tenant.com",
+                'smtp_password': "pwd",
+                'smtp_from_email': "noreply@tenant.com"
+            }
         )
 
         # 2. Register Collateral

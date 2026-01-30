@@ -1,7 +1,7 @@
 from celery import shared_task
 from .services import ValuationParsingAgent
 from .models import AgentLog
-from apps.collateral.models import ValuationRequest, ValuationReport, EmailConfiguration
+from apps.collateral.models import ValuationRequest, ValuationReport
 from django.core.files.base import ContentFile
 import logging
 
@@ -71,7 +71,7 @@ def poll_valuer_emails_task():
     Periodic task to poll IMAP/Email for new reports (Skeleton).
     """
     # In a real implementation:
-    # 1. Connect to IMAP using EmailConfiguration
+    # 1. Connect to IMAP using TenantSettings
     # 2. Fetch new emails
     # 3. Extract tracking ID from Reply-To or Subject
     # 4. Trigger process_valuation_report_task

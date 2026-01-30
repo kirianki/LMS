@@ -18,7 +18,7 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
     queryset = SavingsAccount.objects.all()
     serializer_class = SavingsAccountSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
-    filterset_fields = ['customer', 'status']
+    filterset_fields = ['borrower', 'status']
 
     @action(detail=True, methods=['post'])
     def deposit(self, request, pk=None):

@@ -89,6 +89,13 @@ class TenantSettings(models.Model):
     mpesa_initiator_password = models.CharField(max_length=255, blank=True)
     mpesa_callback_url = models.URLField(blank=True)
     
+    # Bank API Configuration (for automated disbursements)
+    bank_api_enabled = models.BooleanField(default=False, help_text='Enable automated bank transfers')
+    bank_api_provider = models.CharField(max_length=50, blank=True, help_text='e.g., pesalink, ipay, jenga_api')
+    bank_api_key = models.CharField(max_length=255, blank=True)
+    bank_api_secret = models.CharField(max_length=255, blank=True)
+    bank_api_account_number = models.CharField(max_length=50, blank=True, help_text='Source account for transfers')
+    
     # SMS Gateway Configuration
     sms_provider = models.CharField(max_length=50, blank=True, help_text='africas_talking, infobip, etc.')
     sms_api_key = models.CharField(max_length=255, blank=True)
@@ -147,3 +154,31 @@ class TenantSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.tenant.name}"
+
+class DocumentTemplate(models.Model):
+    class TemplateType(models.TextChoices):
+        OFFER_LETTER = 'offer_letter', 'Offer Letter'
+        DISBURSEMENT_LETTER = 'disbursement_letter', 'Disbursement Checklist'
+        OTHER = 'other', 'Other'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='document_templates')
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    template_type = models.CharField(
+        max_length=50, 
+        choices=TemplateType.choices, 
+        default=TemplateType.OFFER_LETTER
+    )
+    content = models.TextField(help_text="HTML content with Jinja2 placeholders. Available context: application, borrower, product, tenant, today")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    history = HistoricalRecords()
+
+    class Meta:
+        unique_together = ('tenant', 'template_type', 'name')
+
+    def __str__(self):
+        return f"{self.name} ({self.get_template_type_display()})"

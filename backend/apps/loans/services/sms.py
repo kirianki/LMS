@@ -96,13 +96,14 @@ class SMSService:
         return {"success": True, "mock": True}
 
 
-def send_loan_reminder_sms(tenant_settings, customer, loan, schedule_entry):
+
+def send_loan_reminder_sms(tenant_settings, borrower, loan, schedule_entry):
     """
     Send a loan payment reminder SMS.
     
     Args:
         tenant_settings: TenantSettings instance
-        customer: Customer instance
+        borrower: Borrower instance
         loan: Loan instance
         schedule_entry: RepaymentSchedule instance
     
@@ -111,23 +112,27 @@ def send_loan_reminder_sms(tenant_settings, customer, loan, schedule_entry):
     """
     sms_service = SMSService(tenant_settings)
     
+    name = borrower.business_name if borrower.borrower_type in ['company', 'institution'] and borrower.business_name else borrower.first_name
+
     message = (
-        f"Dear {customer.first_name}, your loan payment of KES {schedule_entry.total_due:,.2f} "
+        f"Dear {name}, your loan payment of KES {schedule_entry.total_due:,.2f} "
         f"for loan {loan.loan_number} is due on {schedule_entry.due_date.strftime('%d/%m/%Y')}. "
         f"Please make payment to avoid penalties. Thank you."
     )
     
-    return sms_service.send_sms(customer.phone_number, message)
+    return sms_service.send_sms(borrower.phone_number, message)
 
 
-def send_overdue_reminder_sms(tenant_settings, customer, loan, schedule_entry, days_overdue):
+def send_overdue_reminder_sms(tenant_settings, borrower, loan, schedule_entry, days_overdue):
     """Send overdue payment reminder."""
     sms_service = SMSService(tenant_settings)
     
+    name = borrower.business_name if borrower.borrower_type in ['company', 'institution'] and borrower.business_name else borrower.first_name
+
     message = (
-        f"Dear {customer.first_name}, your loan payment of KES {schedule_entry.total_due:,.2f} "
+        f"Dear {name}, your loan payment of KES {schedule_entry.total_due:,.2f} "
         f"for loan {loan.loan_number} is {days_overdue} days OVERDUE. "
         f"Please make payment immediately to avoid further penalties."
     )
     
-    return sms_service.send_sms(customer.phone_number, message)
+    return sms_service.send_sms(borrower.phone_number, message)

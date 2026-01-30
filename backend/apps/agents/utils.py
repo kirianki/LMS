@@ -1,32 +1,38 @@
 from django.core.mail import get_connection, EmailMessage
 from django.conf import settings
-from apps.collateral.models import EmailConfiguration
 import logging
 
 logger = logging.getLogger(__name__)
 
-def send_tenant_email(tenant_config_id, subject, message, recipient_list):
+def send_tenant_email(settings_obj, subject, message, recipient_list, attachments=None):
     """
-    Sends an email using dynamic SMTP settings for a specific tenant.
+    Sends an email using dynamic SMTP settings from TenantSettings.
+    attachments: list of tuples (filename, content, mimetype)
     """
+    if not settings_obj or not settings_obj.smtp_host:
+        logger.warning("Email configuration missing for tenant.")
+        return 0
+
     try:
-        config = EmailConfiguration.objects.get(id=tenant_config_id)
-        
         connection = get_connection(
-            host=config.smtp_host,
-            port=config.smtp_port,
-            username=config.smtp_user,
-            password=config.smtp_password, # In real app, decrypt this
-            use_tls=config.use_tls,
+            host=settings_obj.smtp_host,
+            port=settings_obj.smtp_port,
+            username=settings_obj.smtp_username,
+            password=settings_obj.smtp_password,
+            use_tls=settings_obj.smtp_use_tls,
         )
         
         email = EmailMessage(
             subject=subject,
             body=message,
-            from_email=config.from_email,
+            from_email=settings_obj.smtp_from_email,
             to=recipient_list,
             connection=connection,
         )
+        
+        if attachments:
+            for attachment in attachments:
+                email.attach(*attachment)
         
         return email.send()
     except Exception as e:

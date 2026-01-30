@@ -5,7 +5,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from .models import CashAccount, Transaction
 from apps.loans.models import Loan, LoanProduct, LoanApplication
-from apps.customers.models import Customer
+from apps.customers.models import Borrower
 from apps.accounting.utils import seed_standard_coa
 from apps.accounting.models import ChartOfAccount, JournalEntry
 from .services.integrity import record_money_event
@@ -16,7 +16,7 @@ class TreasuryTestCase(TenantTestCase):
     def setUp(self):
         seed_standard_coa()
         self.user = User.objects.create_user(email='treasuryuser@example.com', password='password')
-        self.customer = Customer.objects.create(
+        self.borrower = Borrower.objects.create(
             first_name="Test", last_name="Customer", email="test@example.com", 
             phone_number="0712345678", id_number="ID12345", date_of_birth="1990-01-01"
         )
@@ -71,7 +71,7 @@ class TreasuryTestCase(TenantTestCase):
         """Test that record_money_event updates both Treasury and GL."""
         # Create a LoanApplication first
         app = LoanApplication.objects.create(
-            customer=self.customer,
+            borrower=self.borrower,
             product=self.product,
             requested_amount=Decimal('10000.00'),
             requested_term=12,
@@ -80,7 +80,7 @@ class TreasuryTestCase(TenantTestCase):
         # Create a Loan
         loan = Loan.objects.create(
             application=app,
-            customer=self.customer,
+            borrower=self.borrower,
             product=self.product,
             principal_amount=Decimal('10000.00'),
             total_interest=Decimal('1200.00'),

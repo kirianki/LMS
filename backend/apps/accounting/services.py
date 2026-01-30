@@ -46,38 +46,45 @@ def create_double_entry(date, description, reference, debits, credits, created_b
 
 # Specialized Posting Functions
 
-def post_loan_disbursement(loan):
+def post_loan_disbursement(loan, cash_account_code='1110'):
     """
     Loan Disbursement:
-    Debit: Loan Portfolio - Principal (Asset)
+    Debit: Loan Portfolio - Principal (Asset - 1210)
     Credit: Cash/Bank Account (Asset)
     """
-    # Mapping account based on method
-    credit_acc = '1110' # Default Bank
-    if loan.disbursement_method == 'mpesa':
-        credit_acc = '1130'
-    
     create_double_entry(
-        date=loan.disbursement_date,
-        description=f"Loan Disbursement: {loan.loan_number} to {loan.customer}",
+        date=loan.disbursement_date or timezone.now().date(),
+        description=f"Loan Disbursement: {loan.loan_number} to {loan.borrower}",
         reference=loan.loan_number,
         debits=[('1210', loan.principal_amount)],
-        credits=[(credit_acc, loan.principal_amount)]
+        credits=[(cash_account_code, loan.principal_amount)]
     )
 
-def post_loan_repayment(repayment):
+def post_fee_income(loan, amount, cash_account_code='1110'):
+    """
+    Fee Income (Withheld from disbursement):
+    Debit: Cash/Bank Account (Asset)
+    Credit: Fee Income (Income - 4200)
+    """
+    if amount <= 0:
+        return None
+
+    return create_double_entry(
+        date=loan.disbursement_date or timezone.now().date(),
+        description=f"Fee Income (Withheld): {loan.loan_number} from {loan.borrower}",
+        reference=f"FEE-{loan.loan_number}",
+        debits=[(cash_account_code, amount)],
+        credits=[('4200', amount)]
+    )
+
+def post_loan_repayment(repayment, cash_account_code='1110'):
     """
     Loan Repayment:
     Debit: Cash/Bank Account (Asset)
-    Credit: Loan Portfolio - Principal (Asset)
-    Credit: Interest Income (Income)
+    Credit: Loan Portfolio - Principal (Asset - 1210)
+    Credit: Interest Income (Income - 4100)
     Credit: Fee/Penalty Income (Income)
     """
-    # Mapping account based on method
-    debit_acc = '1110'
-    if repayment.payment_method == 'mpesa':
-        debit_acc = '1130'
-    
     credits = []
     if repayment.principal_paid > 0:
         credits.append(('1210', repayment.principal_paid))
@@ -90,16 +97,16 @@ def post_loan_repayment(repayment):
         
     create_double_entry(
         date=repayment.payment_date,
-        description=f"Loan Repayment: {repayment.loan.loan_number} from {repayment.loan.customer}",
+        description=f"Loan Repayment: {repayment.loan.loan_number} from {repayment.loan.borrower}",
         reference=repayment.reference_number,
-        debits=[(debit_acc, repayment.amount)],
+        debits=[(cash_account_code, repayment.amount)],
         credits=credits
     )
 
-def post_external_expense(expense):
+def post_external_expense(expense, cash_account_code='1120'):
     """
     Expense Payment:
-    Debit: Operating Expenses (Expense)
+    Debit: Operating Expenses (Expense - 5100)
     Credit: Cash/Bank (Asset)
     """
     create_double_entry(
@@ -107,7 +114,7 @@ def post_external_expense(expense):
         description=f"Expense Payment: {expense.description}",
         reference=expense.expense_number,
         debits=[('5100', expense.amount)],
-        credits=[('1120', expense.amount)] # Default Petty Cash
+        credits=[(cash_account_code, expense.amount)]
     )
 
 def post_savings_deposit(transaction):

@@ -1,11 +1,14 @@
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, filters
+from django_filters.rest_framework import DjangoFilterBackend
 from apps.users.permissions import HasRolePermission
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from django.http import FileResponse
 from django.utils import timezone
 from django.db import transaction
+from django.core.files.base import ContentFile
 from datetime import date
+from decimal import Decimal
 from dateutil.relativedelta import relativedelta
 
 from .models import (
@@ -29,7 +32,6 @@ from .services import (
     generate_offer_letter, generate_loan_statement,
     generate_disbursement_letter
 )
-from .services.treasury_sync import record_loan_disbursement
 from .services.arrears import (
     calculate_loan_arrears_status, get_arrears_aging_report, calculate_par_metrics
 )
@@ -45,14 +47,26 @@ class LoanProductViewSet(viewsets.ModelViewSet):
     queryset = LoanProduct.objects.all()
     serializer_class = LoanProductSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
-    filterset_fields = ['is_active', 'requires_collateral', 'requires_guarantor']
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['is_active', 'requires_collateral', 'term_unit']
+    search_fields = ['name', 'code', 'description']
+    ordering_fields = ['name', 'created_at', 'min_amount', 'max_amount']
+    ordering = ['name']
 
 
 class LoanApplicationViewSet(viewsets.ModelViewSet):
     queryset = LoanApplication.objects.all()
     serializer_class = LoanApplicationSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
-    filterset_fields = ['customer', 'product', 'status']
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['borrower', 'product', 'status', 'risk_category']
+    search_fields = [
+        'application_number', 
+        'borrower__first_name', 'borrower__last_name', 'borrower__business_name',
+        'borrower__borrower_number', 'borrower__id_number'
+    ]
+    ordering_fields = ['created_at', 'requested_amount', 'approved_amount', 'submitted_at']
+    ordering = ['-created_at']
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -90,14 +104,21 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """Approve loan application and set deductions."""
+        """Approve loan application and set terms."""
         application = self.get_object()
         serializer = LoanApplicationApproveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        if application.status not in [LoanApplication.Status.SUBMITTED, LoanApplication.Status.UNDER_REVIEW]:
+        # Allow revision if already approved or offer sent
+        valid_statuses = [
+            LoanApplication.Status.SUBMITTED, 
+            LoanApplication.Status.UNDER_REVIEW,
+            LoanApplication.Status.APPROVED,
+            LoanApplication.Status.OFFER_SENT
+        ]
+        if application.status not in valid_statuses:
             return Response(
-                {'error': 'Application cannot be approved in current status.'},
+                {'error': f'Application in {application.status} status cannot be approved/revised.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -139,19 +160,83 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             
             application.save()
             
+            # Clear existing schedules before regenerating (Idempotency)
+            application.provisional_schedules.all().delete()
+            
+            # Generate and save provisional repayment schedule
+            provisional_schedule = generate_repayment_schedule(application)
+            RepaymentSchedule.objects.bulk_create(provisional_schedule)
+            
         return Response({'status': 'approved'})
+
+    @action(detail=True, methods=['get', 'put'])
+    def manage_schedule(self, request, pk=None):
+        """View or Edit provisional repayment schedule before disbursement."""
+        application = self.get_object()
+        
+        if request.method == 'GET':
+            schedules = application.provisional_schedules.all().order_by('due_date')
+            if not schedules.exists():
+                # If no schedule exists (e.g. legacy), generate one on the fly (but don't save yet to avoid side effects in GET)
+                # Actually, better to generate and save if missing, for consistency
+                provisional_schedule = generate_repayment_schedule(application)
+                RepaymentSchedule.objects.bulk_create(provisional_schedule)
+                schedules = application.provisional_schedules.all().order_by('due_date')
+                
+            serializer = RepaymentScheduleSerializer(schedules, many=True)
+            return Response(serializer.data)
+        
+        elif request.method == 'PUT':
+            # 1. Validate total principal matches approved amount
+            approved_amount = application.approved_amount
+            total_principal = sum(Decimal(str(item.get('principal_due', 0))) for item in request.data)
+            
+            # Allow a small delta for rounding differences (e.g. 0.05)
+            if abs(approved_amount - total_principal) > Decimal('1.00'):
+                return Response(
+                    {'error': f"Total principal ({total_principal}) must match approved amount ({approved_amount})."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            with transaction.atomic():
+                # 2. Delete existing provisional schedules
+                application.provisional_schedules.all().delete()
+                
+                # 3. Create new schedules
+                new_schedules = []
+                for item in request.data:
+                    sched = RepaymentSchedule(
+                        application=application,
+                        installment_number=item.get('installment_number'),
+                        due_date=item.get('due_date'),
+                        principal_due=item.get('principal_due'),
+                        interest_due=item.get('interest_due'),
+                        fees_due=item.get('fees_due', 0),
+                        total_due=Decimal(str(item.get('principal_due'))) + Decimal(str(item.get('interest_due'))) + Decimal(str(item.get('fees_due', 0)))
+                    )
+                    new_schedules.append(sched)
+                
+                RepaymentSchedule.objects.bulk_create(new_schedules)
+            
+            return Response({'status': 'schedule_updated'})
 
     @action(detail=True, methods=['post'])
     def send_offer_letter(self, request, pk=None):
         """Generate and send offer letter."""
         application = self.get_object()
-        if application.status != LoanApplication.Status.APPROVED:
+        
+        # Allow regeneration if status is APPROVED or OFFER_SENT
+        if application.status not in [LoanApplication.Status.APPROVED, LoanApplication.Status.OFFER_SENT]:
             return Response({'error': 'Application must be approved first.'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Generate PDF
         from django.core.files.base import ContentFile
         pdf_buffer = generate_offer_letter(application, request.tenant)
         
+        # Delete old file if it exists to prevent suffixing
+        if application.offer_letter_file:
+            application.offer_letter_file.delete(save=False)
+            
         application.offer_letter_file.save(
             f"offer_{application.application_number}.pdf",
             ContentFile(pdf_buffer.read())
@@ -174,10 +259,19 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def download_disbursement_letter(self, request, pk=None):
-        """Download the generated disbursement letter."""
+        """Download the generated disbursement letter (Advice)."""
         application = self.get_object()
         if not application.disbursement_letter_file:
-            return Response({'error': 'Disbursement letter has not been generated yet.'}, status=status.HTTP_404_NOT_FOUND)
+            # Fallback: Generate it on the fly if we are in ACCEPTED status (Authorization Phase)
+            if application.status == LoanApplication.Status.OFFER_ACCEPTED:
+                pdf_buffer = generate_disbursement_letter(application, request.tenant)
+                filename = f"disbursement_checklist_{application.application_number}.pdf"
+                application.disbursement_letter_file.save(filename, ContentFile(pdf_buffer.getvalue()), save=True)
+                # Rewind buffer for FileResponse
+                pdf_buffer.seek(0)
+                return FileResponse(pdf_buffer, as_attachment=True, filename=filename)
+            
+            return Response({'error': 'Disbursement checklist has not been generated yet.'}, status=status.HTTP_404_NOT_FOUND)
         
         return FileResponse(application.disbursement_letter_file.open(), as_attachment=True)
 
@@ -190,9 +284,104 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             
         application.signed_offer_letter = request.FILES['signed_offer']
         application.status = LoanApplication.Status.OFFER_ACCEPTED
+        
+        # Update repayment channel if provided
+        repayment_channel = request.data.get('repayment_channel')
+        if repayment_channel:
+            application.repayment_channel = repayment_channel
+        
+        # 1. Delete unsigned offer letter to keep storage clean
+        if application.offer_letter_file:
+            application.offer_letter_file.delete(save=False)
+        
+        application.save()
+
+        # 2. Automatically generate the disbursement letter (Checklist)
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Starting auto-generation of disbursement checklist for {application.application_number}")
+            
+            pdf_buffer = generate_disbursement_letter(application, request.tenant)
+            if not pdf_buffer:
+                logger.error(f"Generated PDF buffer is None for {application.application_number}")
+            else:
+                filename = f"disbursement_checklist_{application.application_number}.pdf"
+                content = pdf_buffer.getvalue()
+                logger.info(f"PDF generated successfully, size: {len(content)} bytes. Saving to field...")
+                
+                application.disbursement_letter_file.save(filename, ContentFile(content), save=True)
+                logger.info(f"File saved successfully: {application.disbursement_letter_file.name}")
+                
+                # 3. Email the letter to the borrower
+                try:
+                    self._email_disbursement_letter(application, request.tenant, content, filename)
+                    logger.info("Outbound email triggered.")
+                except Exception as email_err:
+                    logger.error(f"Emailing failed: {email_err}")
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"CRITICAL: Automation failed during offer acceptance for {application.application_number}: {e}", exc_info=True)
+
+        return Response({'status': 'offer_accepted'})
+
+    def _email_disbursement_letter(self, application, tenant, pdf_content, filename):
+        """Helper to email the disbursement letter to the relevant contact."""
+        from apps.agents.utils import send_tenant_email
+        
+        tenant_settings = getattr(tenant, 'settings', None)
+        if not tenant_settings or not tenant_settings.smtp_host:
+            return
+
+        borrower = application.borrower
+        recipient_email = None
+        recipient_name = ""
+
+        if borrower.borrower_type in ['company', 'institution']:
+            primary_contact = borrower.contacts.filter(is_primary=True).first()
+            if primary_contact and primary_contact.email:
+                recipient_email = primary_contact.email
+                recipient_name = f"{primary_contact.first_name} {primary_contact.last_name}"
+        
+        # Fallback to borrower email
+        if not recipient_email and borrower.email:
+            recipient_email = borrower.email
+            if borrower.borrower_type in ['company', 'institution']:
+                recipient_name = borrower.business_name
+            else:
+                recipient_name = f"{borrower.first_name} {borrower.last_name}"
+
+        if not recipient_email:
+            return
+
+        subject = f"Disbursement Checklist - {application.application_number}"
+        company_name = (tenant_settings.company_name if tenant_settings and tenant_settings.company_name else tenant.name)
+        message = f"Dear {recipient_name},\n\nPlease find attached the disbursement checklist for your loan application {application.application_number}.\n\nBest regards,\n{company_name}"
+        
+        attachments = [(filename, pdf_content, 'application/pdf')]
+        
+        send_tenant_email(
+            settings_obj=tenant_settings,
+            subject=subject,
+            message=message,
+            recipient_list=[recipient_email],
+            attachments=attachments
+        )
+
+    @action(detail=True, methods=['post'])
+    def upload_disbursement_authorization(self, request, pk=None):
+        """Upload signed disbursement checklist."""
+        application = self.get_object()
+        if 'signed_disbursement' not in request.FILES:
+            return Response({'error': 'Signed disbursement checklist file is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        application.signed_disbursement_letter = request.FILES['signed_disbursement']
         application.save()
         
-        return Response({'status': 'offer_accepted'})
+        return Response({'status': 'disbursement_checklist_uploaded'})
+
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject loan application."""
@@ -216,9 +405,9 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def disburse(self, request, pk=None):
-        """Disburse loan after offer is accepted."""
+        """Disburse loan after offer is accepted - supports API and manual modes."""
         application = self.get_object()
-        serializer = DisburseSerializer(data=request.data)
+        serializer = DisburseSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         
         if application.status != LoanApplication.Status.OFFER_ACCEPTED:
@@ -226,9 +415,113 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 {'error': 'Application must be in OFFER_ACCEPTED status before disbursement.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        if not application.signed_disbursement_letter:
+            return Response(
+                {'error': 'Signed disbursement checklist must be uploaded before disbursement.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        # Import payment services
+        from .services.mpesa import MpesaService
+        from .services.bank_api import BankAPIService
+
+        disbursement_method = serializer.validated_data['disbursement_method']
+        disbursement_details = serializer.validated_data.get('disbursement_details', {})
+        
+        # Get tenant settings
+        tenant_settings = getattr(request.tenant, 'settings', None)
+        
+        # Determine mode: AUTOMATED or MANUAL
+        api_transaction_id = None
+        disbursement_status = Loan.DisbursementStatus.PENDING
+        is_automated = False
+        
+        try:
+            if disbursement_method == 'mpesa':
+                # Check if M-Pesa is configured
+                if tenant_settings and tenant_settings.mpesa_consumer_key and tenant_settings.mpesa_consumer_secret:
+                    is_automated = True
+                    logger.info(f"Attempting automated M-Pesa disbursement for {application.application_number}")
+                    
+                    mpesa = MpesaService(tenant_settings)
+                    phone = disbursement_details.get('phone_number')
+                    if not phone:
+                        return Response({'error': 'Phone number required for M-Pesa disbursement'}, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    total_deductions = sum(d.calculated_amount for d in application.deductions.filter(is_withheld=True))
+                    disbursed_amount = application.approved_amount - total_deductions
+                    
+                    result = mpesa.initiate_b2c_disbursement(
+                        phone_number=phone,
+                        amount=disbursed_amount,
+                        remarks=f"Loan Disbursement - {application.application_number}"
+                    )
+                    
+                    if result.get('success'):
+                        api_transaction_id = result.get('conversation_id', result.get('originator_conversation_id'))
+                        disbursement_status = Loan.DisbursementStatus.PROCESSING
+                        logger.info(f"M-Pesa B2C initiated: {api_transaction_id}")
+                    else:
+                        return Response({'error': f"M-Pesa disbursement failed: {result.get('error')}"}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    logger.info(f"M-Pesa not configured - using manual mode for {application.application_number}")
+            
+            elif disbursement_method == 'bank_transfer':
+                # Check if Bank API is configured
+                if tenant_settings and tenant_settings.bank_api_enabled:
+                    is_automated = True
+                    logger.info(f"Attempting automated bank transfer for {application.application_number}")
+                    
+                    bank_api = BankAPIService(tenant_settings)
+                    account = disbursement_details.get('account_number')
+                    bank = disbursement_details.get('bank_name')
+                    
+                    if not account or not bank:
+                        return Response({'error': 'Account number and bank name required for bank transfer'}, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    total_deductions = sum(d.calculated_amount for d in application.deductions.filter(is_withheld=True))
+                    disbursed_amount = application.approved_amount - total_deductions
+                    
+                    result = bank_api.initiate_transfer(
+                        recipient_account=account,
+                        recipient_bank=bank,
+                        amount=disbursed_amount,
+                        reference=application.application_number,
+                        narration=f"Loan Disbursement - {application.application_number}"
+                    )
+                    
+                    if result.get('success'):
+                        api_transaction_id = result.get('transaction_id')
+                        disbursement_status = Loan.DisbursementStatus.PROCESSING
+                        logger.info(f"Bank transfer initiated: {api_transaction_id}")
+                    else:
+                        logger.warning(f"Bank API failed: {result.get('error')}. Falling back to manual mode.")
+                else:
+                    logger.info(f"Bank API not configured - using manual mode for {application.application_number}")
+            
+            # MANUAL MODE VALIDATION
+            if not is_automated or api_transaction_id is None:
+                # Manual mode - require proof and reference
+                disbursement_proof = serializer.validated_data.get('disbursement_proof')
+                manual_reference = serializer.validated_data.get('disbursement_reference_manual')
+                
+                if not disbursement_proof or not manual_reference:
+                    return Response({
+                        'error': 'Manual disbursement requires both disbursement_proof (file) and disbursement_reference_manual (transaction code/reference)'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                api_transaction_id = manual_reference
+                disbursement_status = Loan.DisbursementStatus.COMPLETED  # Assume completed for manual
+                logger.info(f"Manual disbursement mode - proof uploaded with reference: {manual_reference}")
+        
+        except Exception as e:
+            logger.error(f"Disbursement processing error: {e}", exc_info=True)
+            return Response({'error': f"Disbursement failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # CREATE LOAN OBJECT
         with transaction.atomic():
-            # 1. Create the Loan object
+            # 1. Calculate amounts
             total_deductions = sum(d.calculated_amount for d in application.deductions.filter(is_withheld=True))
             disbursed_amount = application.approved_amount - total_deductions
             
@@ -237,19 +530,25 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 application.approved_amount,
                 application.approved_interest_rate,
                 application.approved_term,
+                application.product.term_unit,
                 application.approved_interest_method
             )
 
             loan = Loan.objects.create(
                 application=application,
-                customer=application.customer,
+                borrower=application.borrower,
                 product=application.product,
                 principal_amount=application.approved_amount,
                 total_interest=total_interest,
                 total_fees=total_deductions,
                 disbursed_amount=disbursed_amount,
                 disbursement_date=timezone.now().date(),
-                disbursement_method=serializer.validated_data['disbursement_method'],
+                disbursement_method=disbursement_method,
+                disbursement_reference=api_transaction_id,
+                disbursement_details=disbursement_details,
+                disbursement_status=disbursement_status,
+                disbursement_proof=serializer.validated_data.get('disbursement_proof') if not is_automated else None,
+                repayment_channel=application.repayment_channel,
                 term=application.approved_term,
                 maturity_date=timezone.now().date() + relativedelta(months=application.approved_term),
                 outstanding_balance=application.approved_amount + total_interest,
@@ -258,8 +557,14 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 collateral=application.collateral
             )
 
-            # 2. Generate Repayment Schedule
-            generate_repayment_schedule(loan)
+            # 2. Handle Repayment Schedule
+            provisional_schedules = application.provisional_schedules.all().order_by('installment_number')
+            
+            if provisional_schedules.exists():
+                provisional_schedules.update(loan=loan, application=None)
+            else:
+                schedules = generate_repayment_schedule(loan)
+                RepaymentSchedule.objects.bulk_create(schedules)
 
             # 3. Handle Documents
             from django.core.files.base import ContentFile
@@ -269,38 +574,41 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 ContentFile(advice_buffer.read())
             )
 
-            # 4. Sync with Treasury
-            record_loan_disbursement(loan, user=request.user)
+            # 4. Sync with Financials (Treasury & Accounting)
+            from apps.treasury.services.integrity import record_money_event
+            record_money_event(
+                'loan_disbursement',
+                loan,
+                cash_account_id=serializer.validated_data.get('cash_account_id'),
+                user=request.user
+            )
 
             # 5. Update Status
             application.status = LoanApplication.Status.DISBURSED
             application.disbursed_at = timezone.now()
             application.save()
 
-        return Response({'status': 'disbursed', 'loan_number': loan.loan_number})
-
-    @action(detail=True, methods=['get'])
-    def download_offer_letter(self, request, pk=None):
-        """Download generated offer letter."""
-        application = self.get_object()
-        if not application.offer_letter_file:
-            return Response({'error': 'Offer letter file not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return FileResponse(application.offer_letter_file, as_attachment=True, filename=f"Offer_{application.application_number}.pdf")
-
-    @action(detail=True, methods=['get'])
-    def download_disbursement_letter(self, request, pk=None):
-        """Download generated disbursement advice."""
-        application = self.get_object()
-        if not application.disbursement_letter_file:
-            return Response({'error': 'Disbursement advice not found.'}, status=status.HTTP_404_NOT_FOUND)
-        return FileResponse(application.disbursement_letter_file, as_attachment=True, filename=f"Disbursement_{application.application_number}.pdf")
-
+        return Response({
+            'status': 'disbursed',
+            'loan_number': loan.loan_number,
+            'disbursement_mode': 'automated' if is_automated else 'manual',
+            'disbursement_reference': api_transaction_id,
+            'disbursement_status': disbursement_status
+        })
 
 class LoanViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Loan.objects.all()
     serializer_class = LoanSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
-    filterset_fields = ['customer', 'product', 'status']
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['borrower', 'product', 'status', 'arrears_category']
+    search_fields = [
+        'loan_number', 
+        'borrower__first_name', 'borrower__last_name', 'borrower__business_name',
+        'borrower__borrower_number', 'borrower__id_number'
+    ]
+    ordering_fields = ['created_at', 'principal_amount', 'outstanding_balance', 'disbursement_date']
+    ordering = ['-created_at']
     
     @action(detail=True, methods=['get'])
     def schedule(self, request, pk=None):
@@ -395,7 +703,14 @@ class CollectionCaseViewSet(viewsets.ModelViewSet):
     queryset = CollectionCase.objects.all()
     serializer_class = CollectionCaseSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'priority', 'assigned_to']
+    search_fields = [
+        'loan__loan_number', 
+        'loan__borrower__first_name', 'loan__borrower__last_name', 'loan__borrower__business_name'
+    ]
+    ordering_fields = ['days_overdue', 'overdue_amount', 'priority', 'next_follow_up']
+    ordering = ['-days_overdue']
     
     @action(detail=True, methods=['post'])
     def log_interaction(self, request, pk=None):
@@ -527,4 +842,4 @@ class LoanGuarantorViewSet(viewsets.ModelViewSet):
     queryset = LoanGuarantor.objects.all()
     serializer_class = LoanGuarantorSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
-    filterset_fields = ['application', 'customer']
+    filterset_fields = ['application', 'borrower']

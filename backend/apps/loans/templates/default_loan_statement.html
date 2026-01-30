@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm 2.5cm 2.5cm 2.5cm;
+
+            @frame footer_frame {
+                -pdf-frame-content: footer_content;
+                left: 2.5cm;
+                width: 16cm;
+                top: 27cm;
+                height: 1.2cm;
+            }
+        }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 9pt;
+            color: #0f172a;
+            line-height: 1.4;
+            background: #fff;
+        }
+
+        .letterhead {
+            width: 100%;
+            margin-bottom: 20pt;
+            padding-bottom: 10pt;
+        }
+
+        .logo-box {
+            width: 50%;
+        }
+
+        .contact-box {
+            width: 50%;
+            text-align: right;
+            font-size: 8pt;
+            color: #475569;
+        }
+
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20pt;
+        }
+
+        .summary-table td {
+            padding: 8pt;
+            border: 0.5pt solid #e2e8f0;
+        }
+
+        .transactions {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .transactions td {
+            padding: 8pt;
+            border-bottom: 0.5pt solid #eee;
+            font-size: 8.5pt;
+        }
+
+        .amount {
+            text-align: right;
+            font-weight: 600;
+        }
+
+        #footer_content {
+            font-size: 8pt;
+            color: #64748b;
+            text-align: center;
+            border-top: 0.8pt solid #e2e8f0;
+            padding-top: 6pt;
+        }
+    </style>
+</head>
+
+<body>
+    {% if logo_path %}
+    <div id="watermark">
+        <img src="{{ logo_path }}" style="width: 100%;">
+    </div>
+    {% endif %}
+    <div id="footer_content">
+        {{ company_name }} - OFFICIAL LOAN STATEMENT | PAGE
+        <pdf:pagenumber>
+    </div>
+    <div class="container">
+        <table class="letterhead">
+            <tr>
+                <td class="logo-box">
+                    {% if tenant_settings.logo %}<img src="{{ tenant_settings.logo.path }}"
+                        style="max-width: 180px; max-height: 70px;">
+                    {% else %}<h2 style="color: {{ primary_color }}; margin:0; border:none; font-size: 18pt;">
+                        {{ company_name }}</h2>{% endif %}
+                </td>
+                <td class="contact-box"><strong>{{ company_name }}</strong><br>TEL: {{ company_phone }}</td>
+            </tr>
+        </table>
+        <h1 style="font-size: 16pt; margin: 10pt 0; text-transform: uppercase; color: {{ primary_color }};">
+            LOAN STATEMENT</h1>
+        <p style="margin-bottom: 15pt;"><strong>Borrower:</strong> {{ borrower_name }} |
+            <strong>Loan No:</strong> {{ loan_number }} | <strong>Date:</strong> {{ today_date }}
+        </p>
+        <table class="summary-table">
+            <tr style="background: #f8fafc;">
+                <td>Principal: <strong>KES {{ principal }}</strong></td>
+                <td>Disbursed: <strong>{{ disbursed_date }}</strong></td>
+                <td style="color: {{ primary_color }};">Outstanding: <strong style="font-size: 11pt;">KES {{
+                        outstanding_balance }}</strong></td>
+            </tr>
+        </table>
+        <table class="transactions">
+            <thead>
+                <tr style="background: {{ primary_color }}; color: white; border: none;">
+                    <th style="padding: 10pt 8pt; text-align: left; font-size: 8pt; text-transform: uppercase;">Date
+                    </th>
+                    <th style="padding: 10pt 8pt; text-align: left; font-size: 8pt; text-transform: uppercase;">
+                        Description</th>
+                    <th style="padding: 10pt 8pt; text-align: left; font-size: 8pt; text-transform: uppercase;">
+                        Reference</th>
+                    <th style="padding: 10pt 8pt; text-align: right; font-size: 8pt; text-transform: uppercase;">Amount
+                        (KES)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{{ disb_date_str }}</td>
+                    <td>Principal Disbursement</td>
+                    <td>{{ disb_ref }}</td>
+                    <td class="amount">{{ disb_amount }}</td>
+                </tr>
+                {% for p in repayments_list %}
+                <tr>
+                    <td>{{ p.date }}</td>
+                    <td>{{ p.description }}</td>
+                    <td>{{ p.reference }}</td>
+                    <td class="amount" style="color: #059669;">{{ p.amount }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div style="margin-top: 40pt; font-size: 8pt; color: #64748b; text-align: center;">
+            <p>This is a computer-generated statement. Values are subject to final verification.</p>
+            <p><strong>{{ footer_text }}</strong></p>
+        </div>
+    </div>
+</body>
+
+</html>

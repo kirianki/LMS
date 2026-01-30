@@ -7,7 +7,12 @@ class SavingsProductSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class SavingsAccountSerializer(serializers.ModelSerializer):
-    customer_name = serializers.ReadOnlyField(source='customer.__str__')
+    borrower_name = serializers.SerializerMethodField()
+    
+    def get_borrower_name(self, obj):
+        if obj.borrower.borrower_type in ['company', 'institution']:
+            return obj.borrower.business_name
+        return f"{obj.borrower.first_name} {obj.borrower.last_name}"
     product_name = serializers.ReadOnlyField(source='product.name')
     
     class Meta:

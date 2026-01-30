@@ -44,7 +44,7 @@ class SavingsAccount(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account_number = models.CharField(max_length=20, unique=True, blank=True)
-    customer = models.ForeignKey('customers.Customer', on_delete=models.CASCADE, related_name='savings_accounts')
+    borrower = models.ForeignKey('customers.Borrower', on_delete=models.CASCADE, related_name='savings_accounts')
     product = models.ForeignKey(SavingsProduct, on_delete=models.PROTECT, related_name='accounts')
     
     current_balance = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal('0.00'))
@@ -73,7 +73,7 @@ class SavingsAccount(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.account_number} - {self.customer}"
+        return f"{self.account_number} - {self.borrower}"
 
 class SavingsTransaction(models.Model):
     class TransactionType(models.TextChoices):

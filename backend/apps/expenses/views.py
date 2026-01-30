@@ -44,7 +44,7 @@ class StaffViewSet(viewsets.ModelViewSet):
 
 
 class PayrollViewSet(viewsets.ModelViewSet):
-    queryset = Payroll.objects.all()
+    queryset = Payroll.objects.select_related('staff').prefetch_related('items').all()
     serializer_class = PayrollSerializer
     permission_classes = [permissions.IsAuthenticated]
     filterset_fields = ['staff', 'period', 'status']

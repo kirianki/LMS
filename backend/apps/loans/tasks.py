@@ -39,16 +39,16 @@ def send_upcoming_payment_reminders():
                     due_date=reminder_date,
                     status__in=['pending', 'partial'],
                     loan__status='active'
-                ).select_related('loan', 'loan__customer')
+                ).select_related('loan', 'loan__borrower')
                 
                 for schedule in upcoming_schedules:
                     loan = schedule.loan
-                    customer = loan.customer
+                    borrower = loan.borrower
                     
-                    result = send_loan_reminder_sms(settings, customer, loan, schedule)
+                    result = send_loan_reminder_sms(settings, borrower, loan, schedule)
                     if result.get('success'):
                         processed_count += 1
-                        logger.info(f"Sent reminder for {loan.loan_number} to {customer.phone_number}")
+                        logger.info(f"Sent reminder for {loan.loan_number} to {borrower.phone_number}")
                     else:
                         logger.warning(f"Failed to send reminder for {loan.loan_number}: {result.get('error')}")
                         
@@ -84,7 +84,7 @@ def send_overdue_payment_reminders():
                     due_date__lt=today,
                     status__in=['pending', 'partial'],
                     loan__status='active'
-                ).select_related('loan', 'loan__customer')
+                ).select_related('loan', 'loan__borrower')
                 
                 for schedule in overdue_schedules:
                     # Update status to overdue
@@ -93,12 +93,12 @@ def send_overdue_payment_reminders():
                         schedule.save()
                     
                     loan = schedule.loan
-                    customer = loan.customer
+                    borrower = loan.borrower
                     days_overdue = (today - schedule.due_date).days
                     
                     # Send reminder every 3 days for overdue
                     if days_overdue % 3 == 0:
-                        result = send_overdue_reminder_sms(settings, customer, loan, schedule, days_overdue)
+                        result = send_overdue_reminder_sms(settings, borrower, loan, schedule, days_overdue)
                         if result.get('success'):
                             processed_count += 1
                             
@@ -203,15 +203,15 @@ def process_mpesa_callback(tenant_schema, callback_data):
                 return
             
             # Find loan by phone number (simplified - could use account reference)
-            from apps.customers.models import Customer
-            customer = Customer.objects.filter(phone_number__endswith=phone[-9:]).first()
-            if not customer:
-                logger.warning(f"Customer not found for phone: {phone}")
+            from apps.customers.models import Borrower
+            borrower = Borrower.objects.filter(phone_number__endswith=phone[-9:]).first()
+            if not borrower:
+                logger.warning(f"Borrower not found for phone: {phone}")
                 return
             
-            loan = Loan.objects.filter(customer=customer, status='active').first()
+            loan = Loan.objects.filter(borrower=borrower, status='active').first()
             if not loan:
-                logger.warning(f"No active loan found for customer: {customer}")
+                logger.warning(f"No active loan found for borrower: {borrower}")
                 return
             
             # Record payment

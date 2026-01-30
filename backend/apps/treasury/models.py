@@ -35,6 +35,11 @@ class CashAccount(models.Model):
     class Meta:
         ordering = ['name']
 
+    def save(self, *args, **kwargs):
+        if not self.id or not CashAccount.objects.filter(pk=self.id).exists():
+            self.current_balance = self.opening_balance
+        super().save(*args, **kwargs)
+
 
 class Transaction(models.Model):
     """Financial transaction log."""

@@ -1,6 +1,6 @@
 from django.contrib import admin
 from simple_history.admin import SimpleHistoryAdmin
-from .models import Collateral, Valuer, ValuationRequest, EmailConfiguration, ValuationReport
+from .models import Collateral, Valuer, ValuationRequest, ValuationReport
 
 @admin.register(Valuer)
 class ValuerAdmin(admin.ModelAdmin):
@@ -12,9 +12,6 @@ class ValuationRequestAdmin(admin.ModelAdmin):
     list_display = ('collateral', 'valuer', 'status', 'created_at')
     list_filter = ('status',)
 
-@admin.register(EmailConfiguration)
-class EmailConfigurationAdmin(admin.ModelAdmin):
-    list_display = ('from_email', 'smtp_host', 'smtp_port')
 
 @admin.register(ValuationReport)
 class ValuationReportAdmin(SimpleHistoryAdmin):
@@ -22,14 +19,14 @@ class ValuationReportAdmin(SimpleHistoryAdmin):
 
 @admin.register(Collateral)
 class CollateralAdmin(SimpleHistoryAdmin):
-    list_display = ('customer', 'collateral_type', 'status', 'market_value', 'forced_sale_value', 'created_at')
+    list_display = ('borrower', 'collateral_type', 'status', 'market_value', 'forced_sale_value', 'created_at')
     list_filter = ('collateral_type', 'status', 'valuation_date')
     search_fields = ('customer__first_name', 'customer__last_name', 'reg_number', 'lr_number', 'logbook_number')
     readonly_fields = ('created_at', 'updated_at')
     
     fieldsets = (
         ('Owner', {
-            'fields': ('customer', 'status')
+            'fields': ('borrower', 'status')
         }),
         ('General Info', {
             'fields': ('collateral_type', 'description', 'document_upload')

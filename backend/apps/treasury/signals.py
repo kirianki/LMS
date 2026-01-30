@@ -83,18 +83,6 @@ def log_expense_payment(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Payroll)
 def log_payroll_payment(sender, instance, **kwargs):
-    """Log payroll as Debit when status changes to PAID."""
+    """Log payroll atomically when status changes to PAID."""
     if instance.status == 'paid':
-        try:
-            if not Transaction.objects.filter(description__contains=f"Payroll: {instance.staff.employee_number}", reference=instance.payment_reference).exists():
-                account = get_default_account(CashAccount.AccountType.BANK)
-                Transaction.objects.create(
-                    account=account,
-                    transaction_type=Transaction.TransactionType.DEBIT,
-                    category=Transaction.Category.PAYROLL,
-                    amount=instance.net_pay,
-                    description=f"Payroll: {instance.staff.employee_number} for {instance.period}",
-                    reference=instance.payment_reference,
-                )
-        except Exception as e:
-            logger.error(f"Payroll log error: {e}")
+        record_money_event('payroll_paid', instance)

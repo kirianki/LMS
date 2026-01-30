@@ -53,13 +53,13 @@ class LoanFeeInline(admin.TabularInline):
 
 @admin.register(LoanApplication)
 class LoanApplicationAdmin(SimpleHistoryAdmin):
-    list_display = ('application_number', 'customer', 'product', 'requested_amount', 'status', 'created_at')
+    list_display = ('application_number', 'borrower', 'product', 'requested_amount', 'status', 'created_at')
     list_filter = ('status', 'product', 'created_at')
     search_fields = ('application_number', 'customer__first_name', 'customer__last_name')
     readonly_fields = ('application_number', 'submitted_at', 'approved_at', 'rejected_at', 'approved_by', 'rejected_by')
     fieldsets = (
         (None, {
-            'fields': ('application_number', 'customer', 'product', 'status')
+            'fields': ('application_number', 'borrower', 'product', 'status')
         }),
         ('Request', {
             'fields': ('requested_amount', 'requested_term', 'purpose', 'collateral')
@@ -76,14 +76,14 @@ class LoanApplicationAdmin(SimpleHistoryAdmin):
 
 @admin.register(Loan)
 class LoanAdmin(SimpleHistoryAdmin):
-    list_display = ('loan_number', 'customer', 'product', 'principal_amount', 'outstanding_balance', 'status', 'disbursement_date')
+    list_display = ('loan_number', 'borrower', 'product', 'principal_amount', 'outstanding_balance', 'status', 'disbursement_date')
     list_filter = ('status', 'product', 'disbursement_date')
     search_fields = ('loan_number', 'customer__first_name', 'customer__last_name')
     readonly_fields = ('loan_number', 'application', 'disbursement_date', 'closed_at')
     inlines = [RepaymentScheduleInline, LoanRepaymentInline, LoanFeeInline]
     fieldsets = (
         (None, {
-            'fields': ('loan_number', 'application', 'customer', 'product', 'status')
+            'fields': ('loan_number', 'application', 'borrower', 'product', 'status')
         }),
         ('Amounts', {
             'fields': ('principal_amount', 'total_interest', 'total_fees', 'disbursed_amount')

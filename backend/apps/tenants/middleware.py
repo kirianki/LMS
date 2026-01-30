@@ -21,7 +21,9 @@ class TenantHeaderMiddleware(MiddlewareMixin):
                 tenant_domain = tenant_domain.split('/')[0]
                 
             # Log the override for debugging
-            # print(f"[TenantMiddleware] Overriding Host '{request.META.get('HTTP_HOST')}' with '{tenant_domain}' from header")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[TenantMiddleware] Overriding Host '{request.META.get('HTTP_HOST')}' with '{tenant_domain}' from header")
             
             # Let's override the HTTP_HOST so django-tenants sees this as the request host
             # IMPORTANT: If we are in dev (localhost:9090), we must preserve the port!

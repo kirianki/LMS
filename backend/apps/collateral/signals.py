@@ -1,6 +1,6 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import Collateral, Valuer, EmailConfiguration, ValuationRequest, ValuationReport
+from .models import Collateral, Valuer, ValuationRequest, ValuationReport
 from apps.agents.utils import send_tenant_email
 import logging
 
@@ -13,17 +13,18 @@ def trigger_collateral_valuation_workflow(sender, instance, created, **kwargs):
         from apps.tenants.models import Tenant
         from django.db import connection
         tenant = connection.tenant
-        if hasattr(tenant, 'settings'):
-            if not tenant.settings.is_automation_enabled:
+        
+        tenant_settings = getattr(tenant, 'settings', None)
+        if tenant_settings:
+            if not tenant_settings.is_automation_enabled:
                 logger.info(f"Automation disabled for tenant {tenant.name}. Skipping valuation workflow.")
                 return
         
         logger.info(f"New collateral {instance.id} created. Triggering valuation workflow.")
         
-        # 1. Get Email Config
-        email_config = EmailConfiguration.objects.first()
-        if not email_config:
-            logger.warning("No EmailConfiguration found for tenant. Skipping automation.")
+        # 1. Check Email Config
+        if not tenant_settings or not tenant_settings.smtp_host:
+            logger.warning("No Email configuration found for tenant. Skipping automation.")
             return
             
         # 2. Find a Valuer for this type
@@ -39,11 +40,13 @@ def trigger_collateral_valuation_workflow(sender, instance, created, **kwargs):
             status=ValuationRequest.RequestStatus.SENT
         )
 
-        # 4. Notify Customer
-        customer = instance.customer
-        customer_subject = f"Valuation Request for your {instance.get_collateral_type_display()}"
-        customer_message = f"""
-        Dear {customer.first_name},
+        # 4. Notify Borrower
+        borrower = instance.borrower
+        name = borrower.business_name if borrower.borrower_type in ['company', 'institution'] and borrower.business_name else borrower.first_name
+        
+        borrower_subject = f"Valuation Request for your {instance.get_collateral_type_display()}"
+        borrower_message = f"""
+        Dear {name},
         
         We have initiated a valuation request for your collateral: {instance}.
         Please follow up with our trusted valuer:
@@ -54,7 +57,7 @@ def trigger_collateral_valuation_workflow(sender, instance, created, **kwargs):
         Regards,
         Management
         """
-        send_tenant_email(email_config.id, customer_subject, customer_message, [customer.email])
+        send_tenant_email(tenant_settings, borrower_subject, borrower_message, [borrower.email])
 
         # 5. Notify Valuer
         valuer_subject = f"NEW VALUATION REQUEST: {instance.id}"
@@ -72,9 +75,7 @@ def trigger_collateral_valuation_workflow(sender, instance, created, **kwargs):
         Regards,
         System Agent
         """
-        send_tenant_email(email_config.id, valuer_subject, valuer_message, [valuer.email])
-        
-        send_tenant_email(email_config.id, valuer_subject, valuer_message, [valuer.email])
+        send_tenant_email(tenant_settings, valuer_subject, valuer_message, [valuer.email])
         
         logger.info(f"Valuation emails sent for collateral {instance.id}")
 

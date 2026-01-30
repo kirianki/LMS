@@ -10,24 +10,24 @@ def update_customer_scoring_on_repayment(sender, instance, created, **kwargs):
     Each successful repayment adds 5 points to the internal score.
     """
     if created:
-        customer = instance.loan.customer
+        borrower = instance.loan.borrower
         
         # Increment internal score
-        customer.internal_score += 5
+        borrower.internal_score += 5
         
         # Recalculate hybrid score if CRB score exists
         # Formula: (CRB * 0.6) + (Internal * 0.4)
-        if customer.crb_score is not None:
+        if borrower.crb_score is not None:
             internal_weight = 0.4
             crb_weight = 0.6
             
-            customer.hybrid_score = int(
-                (customer.crb_score * crb_weight) + 
-                (customer.internal_score * internal_weight)
+            borrower.hybrid_score = int(
+                (borrower.crb_score * crb_weight) + 
+                (borrower.internal_score * internal_weight)
             )
         else:
             # If no CRB score yet, hybrid score is just the internal score (for now)
             # or we leave it as None until first CRB check
             pass
             
-        customer.save()
+        borrower.save()
