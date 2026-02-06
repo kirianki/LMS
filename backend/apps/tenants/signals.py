@@ -38,25 +38,49 @@ def bootstrap_tenant_data(sender, **kwargs):
                 admin_role = Role.objects.get(name='Administrator')
 
             # 2. Create Default Other Roles
-            for role_name, desc in [
-                ('Credit Officer', 'Loan application review and approval'),
-                ('Collection Officer', 'Debt recovery management')
+            for role_name, desc, limit in [
+                ('Branch Manager', 'Oversees branch operations and local approvals', 500000.00),
+                ('Credit Manager', 'Senior credit review and high-limit approvals', 1000000.00),
+                ('Credit Officer', 'Standard loan application review', 50000.00),
+                ('Accountant', 'Financial reporting and journal management', 0.00),
+                ('Field Officer', 'Borrower recruitment and collection management', 0.00),
+                ('Collection Officer', 'Debt recovery and arrears management', 0.00)
             ]:
                 if not Role.objects.filter(name=role_name).exists():
-                    r = Role(name=role_name, description=desc, is_system_role=True)
+                    r = Role(
+                        name=role_name, 
+                        description=desc, 
+                        is_system_role=True,
+                        approval_limit=limit
+                    )
                     r._history_user = None
                     r.save()
 
-            # 3. Create Admin User
-            admin_email = f"admin@{tenant.schema_name}.local"
-            if not User.objects.filter(email=admin_email).exists():
-                admin_user = User(
-                    email=admin_email,
-                    first_name=f"{tenant.name}",
-                    last_name="Admin",
-                    role=admin_role,
-                    is_staff=True
+            # 3. Create Default Branch (Main HQ)
+            from apps.branches.models import Branch, BranchAssignment
+            if not Branch.objects.filter(name='Main HQ').exists():
+                main_hq = Branch(
+                    name='Main HQ',
+                    code='HQ001',
+                    address=f"{tenant.name} Headquarters",
+                    is_active=True
                 )
-                admin_user.set_password("InitPassword123!")
-                admin_user._history_user = None
-                admin_user.save()
+                main_hq._history_user = None
+                main_hq.save()
+            else:
+                main_hq = Branch.objects.get(name='Main HQ')
+
+            # 4. Auto-assign first user to Main HQ
+            # This ensures that a tenant owner (or the first user created) 
+            # is automatically linked to the headquarters branch.
+            first_user = User.objects.filter(is_active=True).first()
+            if first_user and not BranchAssignment.objects.filter(user=first_user).exists():
+                assignment = BranchAssignment(user=first_user, branch=main_hq)
+                assignment._history_user = None
+                assignment.save()
+                
+                # Also ensure they have the Administrator role if they don't have one
+                if not first_user.role:
+                    first_user.role = admin_role
+                    first_user._history_user = None
+                    first_user.save()

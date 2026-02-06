@@ -49,12 +49,7 @@ def calculate_processing_fee(principal, fee_type, fee_value):
 def generate_repayment_schedule(loan_obj):
     """
     Generate repayment schedule entries for a loan or application.
-    
-    Args:
-        loan_obj: Loan or LoanApplication instance
-    
-    Returns:
-        List of RepaymentSchedule instances (not saved)
+    Supports flexible repayment frequencies (Weekly, Monthly, Quarterly, Bi-Annually, Annually, Bullet).
     """
     is_application = hasattr(loan_obj, 'requested_amount') and not hasattr(loan_obj, 'loan_number')
     
@@ -66,46 +61,92 @@ def generate_repayment_schedule(loan_obj):
         start_date = date.today() # Projected
         
         # Estimate interest
-        interest_rate = loan_obj.approved_interest_rate or product.interest_rate
-        interest_type = loan_obj.approved_interest_method or product.interest_type
+        interest_rate = loan_obj.approved_interest_rate or product.suggested_interest_rate or Decimal('0.00')
+        interest_type = loan_obj.approved_interest_method or product.interest_type or LoanProduct.InterestType.FLAT
         
-        total_interest = calculate_interest(
-            principal,
-            interest_rate,
-            term,
-            product.term_unit,
-            interest_type
-        )
+        # New Field
+        frequency = getattr(loan_obj, 'approved_repayment_frequency', 'monthly')
     else:
         principal = loan_obj.principal_amount
         total_interest = loan_obj.total_interest
         term = loan_obj.term
         start_date = loan_obj.disbursement_date
+        interest_rate = product.suggested_interest_rate # Not always stored on loan, ideally should be snapshot
+        
+        # New Field
+        frequency = getattr(loan_obj, 'repayment_frequency', 'monthly')
+        
+        # Fallback if interest rate missing on loan processing (should exist on approved app)
+        if hasattr(loan_obj, 'application') and loan_obj.application:
+            interest_rate = loan_obj.application.approved_interest_rate
+            interest_type = loan_obj.application.approved_interest_method
+        else:
+             interest_type = getattr(product, 'interest_type', LoanProduct.InterestType.FLAT)
+
+    # Determine Delta and number of installments
+    delta = relativedelta(months=1)
+    frequency_divisor = 1 # Divisor for monthly terms
     
+    if frequency == 'weekly':
+        delta = timedelta(weeks=1)
+        # If term is in months, convert to weeks approx
+        if product.term_unit == 'months':
+            num_installments = int(Decimal(term) * Decimal('4.33'))
+        elif product.term_unit == 'weeks':
+            num_installments = term
+        else: # days
+            num_installments = term // 7
+            
+    elif frequency == 'quarterly':
+        delta = relativedelta(months=3)
+        frequency_divisor = 3
+        num_installments = max(1, term // 3) if product.term_unit == 'months' else term # Simplistic fallback
+        
+    elif frequency == 'bi_annually':
+        delta = relativedelta(months=6)
+        frequency_divisor = 6
+        num_installments = max(1, term // 6) if product.term_unit == 'months' else term
+        
+    elif frequency == 'annually':
+        delta = relativedelta(months=12)
+        frequency_divisor = 12
+        num_installments = max(1, term // 12) if product.term_unit == 'months' else term
+        
+    elif frequency == 'bullet':
+        delta = relativedelta(months=term) if product.term_unit == 'months' else timedelta(days=term) # End of term
+        num_installments = 1
+        frequency_divisor = term
+        
+    else: # Default Monthly
+        delta = relativedelta(months=1)
+        frequency_divisor = 1
+        num_installments = term if product.term_unit == 'months' else term # Assume 1-to-1 matching if units line up
+    
+    # Recalculate total interest based on correct term/frequency mechanics if needed
+    # For now, we assume 'calculate_interest' helper returns the GLOBAL total interest for the term
+    if is_application:
+        total_interest = calculate_interest(
+            principal,
+            interest_rate or Decimal('0.00'),
+            term,
+            product.term_unit,
+            interest_type
+        )
+
     schedules = []
     
-    # Determine interest type with robust fallback
-    interest_type = getattr(product, 'interest_type', LoanProduct.InterestType.FLAT)
-    if is_application:
-        interest_type = loan_obj.approved_interest_method or interest_type
-
     if interest_type == LoanProduct.InterestType.FLAT:
         remaining_principal = principal
         remaining_interest = total_interest
         
-        for i in range(1, term + 1):
-            if product.term_unit == LoanProduct.TermUnit.DAYS:
-                due_date = start_date + timedelta(days=i)
-            elif product.term_unit == LoanProduct.TermUnit.WEEKS:
-                due_date = start_date + timedelta(weeks=i)
-            else:  # months
-                due_date = start_date + relativedelta(months=i)
-            
-            p_due = round(principal / term, 2)
-            i_due = round(total_interest / term, 2)
+        for i in range(1, num_installments + 1):
+            due_date = start_date + (delta * i)
+
+            p_due = round(principal / num_installments, 2)
+            i_due = round(total_interest / num_installments, 2)
             
             # Final installment adjustment
-            if i == term:
+            if i == num_installments:
                 p_due = remaining_principal
                 i_due = remaining_interest
             
@@ -114,7 +155,7 @@ def generate_repayment_schedule(loan_obj):
                 due_date=due_date,
                 principal_due=p_due,
                 interest_due=i_due,
-                total_due=p_due + i_due  # Explicitly calculate total
+                total_due=p_due + i_due
             )
             if is_application:
                 schedule.application = loan_obj
@@ -124,40 +165,50 @@ def generate_repayment_schedule(loan_obj):
             schedules.append(schedule)
             remaining_principal -= p_due
             remaining_interest -= i_due
-    
-    else:  # Reducing balance (amortization)
-        # Calculate monthly rate
-        if product.term_unit == LoanProduct.TermUnit.DAYS:
-            period_rate = (interest_rate / Decimal('100')) / Decimal('365')
-        elif product.term_unit == LoanProduct.TermUnit.WEEKS:
-            period_rate = (interest_rate / Decimal('100')) / Decimal('52')
-        else:
-            period_rate = (interest_rate / Decimal('100')) / Decimal('12')
+            
+    else: # Reducing Balance
+        # Recalculate PERIOD rate effectively
+        # If term=12 months, rate=12% PA.
+        # Monthly: rate = 1%. n = 12.
+        # Bi-Annual: rate = 6%. n = 2.
         
-        # Calculate EMI using formula: P * r * (1+r)^n / ((1+r)^n - 1)
-        if period_rate > 0:
-            r = period_rate
-            n = term
-            emi = principal * r * ((1 + r) ** n) / (((1 + r) ** n) - 1)
-        else:
-            emi = principal / term
+        # Annual effective rate
+        r_annual = (interest_rate or Decimal('0.00')) / Decimal('100')
         
+        # Period rate
+        if frequency == 'weekly':
+            r_period = r_annual / Decimal('52')
+        elif frequency == 'quarterly':
+            r_period = r_annual / Decimal('4')
+        elif frequency == 'bi_annually':
+            r_period = r_annual / Decimal('2')
+        elif frequency == 'annually':
+            r_period = r_annual
+        elif frequency == 'bullet':
+            r_period = r_annual * (Decimal(term) / Decimal('12')) # Approx for bullet
+        else: # Monthly
+            r_period = r_annual / Decimal('12')
+            
+        n = num_installments
+        
+        if r_period > 0 and n > 0:
+            emi = principal * r_period * ((1 + r_period) ** n) / (((1 + r_period) ** n) - 1)
+        else:
+            emi = principal / n if n > 0 else principal
+            
         remaining_principal = principal
         
-        for i in range(1, term + 1):
-            if product.term_unit == LoanProduct.TermUnit.DAYS:
-                due_date = start_date + timedelta(days=i)
-            elif product.term_unit == LoanProduct.TermUnit.WEEKS:
-                due_date = start_date + timedelta(weeks=i)
-            else:
-                due_date = start_date + relativedelta(months=i)
+        for i in range(1, n + 1):
+            due_date = start_date + (delta * i)
             
-            interest_component = remaining_principal * period_rate
+            interest_component = remaining_principal * r_period
             principal_component = emi - interest_component
             
-            # Handle final installment rounding
-            if i == term:
+            # Adjustment for final
+            if i == n:
                 principal_component = remaining_principal
+                # Recalculate final interest on remaining
+                interest_component = remaining_principal * r_period 
             
             p_comp = round(principal_component, 2)
             i_comp = round(interest_component, 2)
@@ -167,7 +218,7 @@ def generate_repayment_schedule(loan_obj):
                 due_date=due_date,
                 principal_due=p_comp,
                 interest_due=i_comp,
-                total_due=p_comp + i_comp  # Explicitly calculate total
+                total_due=p_comp + i_comp
             )
             if is_application:
                 schedule.application = loan_obj
@@ -176,7 +227,7 @@ def generate_repayment_schedule(loan_obj):
             
             schedules.append(schedule)
             remaining_principal -= principal_component
-    
+
     return schedules
 
 

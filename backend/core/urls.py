@@ -33,7 +33,7 @@ urlpatterns = [
     # Tenant Info (Self)
     path('api/v1/', include('apps.tenants.urls')),
     # Customers
-    path('api/v1/', include('apps.customers.urls')),
+    path('api/v1/customers/', include('apps.customers.urls')),
     path('api/v1/collateral/', include('apps.collateral.urls')),
     path('api/v1/agents/', include('apps.agents.urls')),
     path('api/v1/loans/', include('apps.loans.urls')),
@@ -42,6 +42,9 @@ urlpatterns = [
     path('api/v1/expenses/', include('apps.expenses.urls')),
     path('api/v1/accounting/', include('apps.accounting.urls')),
     path('api/v1/savings/', include('apps.savings.urls')),
+    path('api/v1/branches/', include('apps.branches.urls')),
+    path('api/v1/auditlog/', include('apps.auditlog.urls')),
+    path('api/v1/notifications/', include('apps.notifications.urls')),
 ]
 
 if settings.DEBUG:

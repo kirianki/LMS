@@ -46,18 +46,29 @@ def create_double_entry(date, description, reference, debits, credits, created_b
 
 # Specialized Posting Functions
 
-def post_loan_disbursement(loan, cash_account_code='1110'):
+def post_loan_disbursement(loan, cash_account_code='1110', payoff_amount=Decimal('0.00'), old_loan_number=None):
     """
     Loan Disbursement:
     Debit: Loan Portfolio - Principal (Asset - 1210)
-    Credit: Cash/Bank Account (Asset)
+    Credit: Old Loan Portfolio (if refinancing - 1210)
+    Credit: Cash/Bank Account (Asset - Net amount)
     """
+    description = f"Loan Disbursement: {loan.loan_number} to {loan.borrower}"
+    credits = []
+    
+    if payoff_amount > 0 and old_loan_number:
+        description = f"Refinancing: {loan.loan_number} pays off {old_loan_number}"
+        credits.append(('1210', payoff_amount))
+    
+    net_cash = loan.principal_amount - payoff_amount
+    credits.append((cash_account_code, net_cash))
+    
     create_double_entry(
         date=loan.disbursement_date or timezone.now().date(),
-        description=f"Loan Disbursement: {loan.loan_number} to {loan.borrower}",
+        description=description,
         reference=loan.loan_number,
         debits=[('1210', loan.principal_amount)],
-        credits=[(cash_account_code, loan.principal_amount)]
+        credits=credits
     )
 
 def post_fee_income(loan, amount, cash_account_code='1110'):
@@ -161,6 +172,6 @@ def post_savings_interest(transaction):
         date=transaction.transaction_date.date(),
         description=f"Interest Posting: {transaction.account.account_number}",
         reference=transaction.reference,
-        debits=[('5200', transaction.amount)],
+        debits=[('5210', transaction.amount)],
         credits=[('2110', transaction.amount)]
     )

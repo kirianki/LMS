@@ -2,6 +2,9 @@ from rest_framework import serializers
 from .models import Borrower, BorrowerContact
 import logging
 
+from apps.branches.serializers import BranchSerializer
+from apps.branches.models import Branch
+
 logger = logging.getLogger(__name__)
 
 class BorrowerContactSerializer(serializers.ModelSerializer):
@@ -12,6 +15,14 @@ class BorrowerContactSerializer(serializers.ModelSerializer):
 class BorrowerSerializer(serializers.ModelSerializer):
     verified_by_name = serializers.ReadOnlyField(source='verified_by.get_full_name')
     contacts = BorrowerContactSerializer(many=True, required=False)
+    branch_details = BranchSerializer(source='branch', read_only=True)
+    branch_id = serializers.PrimaryKeyRelatedField(
+        queryset=Branch.objects.all(),
+        source='branch',
+        write_only=True,
+        required=False,
+        allow_null=True
+    )
 
     class Meta:
         model = Borrower
@@ -80,3 +91,50 @@ class BorrowerSerializer(serializers.ModelSerializer):
 class CustomerVerificationSerializer(serializers.Serializer):
     """Serializer for the verify_id action."""
     notes = serializers.CharField(required=False, allow_blank=True)
+
+class BorrowerHistorySerializer(serializers.ModelSerializer):
+    history_user_name = serializers.ReadOnlyField(source='history_user.get_full_name')
+    history_type_display = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Borrower.history.model
+        fields = '__all__'
+
+
+    def get_history_type_display(self, obj):
+        mapping = {'+': 'Created', '~': 'Updated', '-': 'Deleted'}
+        return mapping.get(obj.history_type, obj.history_type)
+
+from .models import CustomerDocument, FinancialStatement
+
+class CustomerDocumentSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.ReadOnlyField(source='uploaded_by.get_full_name')
+    verified_by_name = serializers.ReadOnlyField(source='verified_by.get_full_name')
+
+    class Meta:
+        model = CustomerDocument
+        fields = '__all__'
+        read_only_fields = ['is_verified', 'verified_at', 'verified_by', 'uploaded_at', 'uploaded_by']
+
+    def create(self, validated_data):
+        # Auto-assign uploader
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['uploaded_by'] = request.user
+        return super().create(validated_data)
+
+
+class FinancialStatementSerializer(serializers.ModelSerializer):
+    uploaded_by_name = serializers.ReadOnlyField(source='uploaded_by.get_full_name')
+
+    class Meta:
+        model = FinancialStatement
+        fields = '__all__'
+        read_only_fields = ['extraction_status', 'extracted_data', 'analysis_results', 'uploaded_at', 'uploaded_by']
+
+    def create(self, validated_data):
+        # Auto-assign uploader
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['uploaded_by'] = request.user
+        return super().create(validated_data)

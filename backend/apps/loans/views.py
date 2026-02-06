@@ -1,7 +1,9 @@
 from rest_framework import viewsets, permissions, status, filters
+from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.users.permissions import HasRolePermission
-from rest_framework.decorators import action, api_view
+from apps.users.filters import BranchScopingFilterBackend
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from django.http import FileResponse
 from django.utils import timezone
@@ -10,12 +12,18 @@ from django.core.files.base import ContentFile
 from datetime import date
 from decimal import Decimal
 from dateutil.relativedelta import relativedelta
+import logging
+
+from apps.auditlog.models import ActivityLog
+from apps.auditlog.serializers import ActivityLogSerializer
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     LoanProduct, LoanApplication, Loan,
     RepaymentSchedule, LoanRepayment, LoanFee,
     CollectionCase, CollectionNote, PromiseToPay, RecoveryAction,
-    CollateralDischarge, LoanDeduction, LoanGuarantor
+    CollateralDischarge, LoanDeduction, LoanGuarantor, LoanComment
 )
 from .serializers import (
     LoanProductSerializer, LoanApplicationSerializer, LoanSerializer,
@@ -24,7 +32,7 @@ from .serializers import (
     LoanRepaymentCreateSerializer, DisburseSerializer,
     CollectionCaseSerializer, CollectionNoteSerializer,
     PromiseToPaySerializer, RecoveryActionSerializer,
-    CollateralDischargeSerializer, LoanGuarantorSerializer
+    CollateralDischargeSerializer, LoanGuarantorSerializer, LoanCommentSerializer
 )
 from .services import (
     calculate_interest, calculate_processing_fee,
@@ -41,6 +49,7 @@ from .services.collections import (
 from .services.recovery import (
     record_recovery_action, approve_loan_write_off
 )
+from apps.accounting.services import post_loan_repayment
 
 
 class LoanProductViewSet(viewsets.ModelViewSet):
@@ -58,7 +67,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
     queryset = LoanApplication.objects.all()
     serializer_class = LoanApplicationSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter, BranchScopingFilterBackend]
     filterset_fields = ['borrower', 'product', 'status', 'risk_category']
     search_fields = [
         'application_number', 
@@ -103,6 +112,20 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         return Response({'status': 'under_review'})
     
     @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel application."""
+        application = self.get_object()
+        if application.status == LoanApplication.Status.DISBURSED:
+            return Response(
+                {'error': 'Cannot cancel a disbursed application.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        application.status = LoanApplication.Status.CANCELLED
+        application.save()
+        return Response({'status': 'cancelled'})
+    
+    @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve loan application and set terms."""
         application = self.get_object()
@@ -111,7 +134,6 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         
         # Allow revision if already approved or offer sent
         valid_statuses = [
-            LoanApplication.Status.SUBMITTED, 
             LoanApplication.Status.UNDER_REVIEW,
             LoanApplication.Status.APPROVED,
             LoanApplication.Status.OFFER_SENT
@@ -135,6 +157,42 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Collateral Insurance Validation
+        if application.collateral and application.collateral.collateral_type in ['motor_vehicle', 'chattels']:
+            expiry_date = application.collateral.insurance_expiry_date
+            if expiry_date:
+                # Calculate expected loan maturity
+                term = serializer.validated_data['approved_term']
+                # Simplification: Assuming monthly term unit for calculation safety margin
+                maturity_date = timezone.now().date() + relativedelta(months=term)
+                
+                if expiry_date < maturity_date:
+                    # Check if insurance fee is included in deductions
+                    deductions = serializer.validated_data.get('deductions', [])
+                    has_insurance_fee = any('insurance' in d['name'].lower() for d in deductions)
+                    
+                    if not has_insurance_fee:
+                        return Response(
+                            {
+                                'error': f"Collateral insurance expires on {expiry_date}, which is before the loan maturity ({maturity_date}). Please add a 'Comprehensive Insurance Renewal' fee to the deductions."
+                            },
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+            
+            # Tracker Validation
+            if not application.collateral.tracker_installed:
+                # Check for tracker fee
+                deductions = serializer.validated_data.get('deductions', [])
+                has_tracker_fee = any('tracker' in d['name'].lower() for d in deductions)
+                
+                if not has_tracker_fee:
+                    return Response(
+                        {
+                             'error': "Vehicle collateral requires a tracker. Please add a 'Tracker Installation Fee' to the deductions or update the collateral details if a tracker is already installed."
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+        
         with transaction.atomic():
             # Set approved terms
             application.approved_amount = serializer.validated_data['approved_amount']
@@ -142,6 +200,13 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             application.approved_interest_rate = serializer.validated_data['approved_interest_rate']
             application.approved_interest_method = serializer.validated_data['approved_interest_method']
             application.approved_interest_period = serializer.validated_data.get('approved_interest_period', 'per_year')
+            application.approved_repayment_frequency = serializer.validated_data.get('approved_repayment_frequency', 'monthly')
+            
+            # Save Penalty Snapshot
+            application.penalty_type = serializer.validated_data.get('penalty_type', 'fixed')
+            application.penalty_value = serializer.validated_data.get('penalty_value', 0)
+            application.penalty_grace_period = serializer.validated_data.get('penalty_grace_period', 0)
+            
             application.status = LoanApplication.Status.APPROVED
             application.approved_at = timezone.now()
             application.approved_by = request.user
@@ -175,13 +240,25 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         application = self.get_object()
         
         if request.method == 'GET':
+            # Only show schedule if application is approved or later
+            allowed_statuses = [
+                LoanApplication.Status.APPROVED,
+                LoanApplication.Status.OFFER_SENT,
+                LoanApplication.Status.OFFER_ACCEPTED,
+                LoanApplication.Status.DISBURSED
+            ]
+            if application.status not in allowed_statuses:
+                return Response([], status=status.HTTP_200_OK)
+
             schedules = application.provisional_schedules.all().order_by('due_date')
             if not schedules.exists():
-                # If no schedule exists (e.g. legacy), generate one on the fly (but don't save yet to avoid side effects in GET)
-                # Actually, better to generate and save if missing, for consistency
-                provisional_schedule = generate_repayment_schedule(application)
-                RepaymentSchedule.objects.bulk_create(provisional_schedule)
-                schedules = application.provisional_schedules.all().order_by('due_date')
+                try:
+                    provisional_schedule = generate_repayment_schedule(application)
+                    RepaymentSchedule.objects.bulk_create(provisional_schedule)
+                    schedules = application.provisional_schedules.all().order_by('due_date')
+                except Exception as e:
+                    logger.error(f"Failed to generate schedule for application {application.id}: {e}")
+                    return Response([], status=status.HTTP_200_OK)
                 
             serializer = RepaymentScheduleSerializer(schedules, many=True)
             return Response(serializer.data)
@@ -243,7 +320,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         )
         
         application.status = LoanApplication.Status.OFFER_SENT
-        application.submitted_at = timezone.now() # Record last activity
+        application.offer_expires_at = timezone.now() + timezone.timedelta(days=7)  # Offer valid for 7 days
         application.save()
         
         return Response({'status': 'offer_sent'})
@@ -262,15 +339,6 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         """Download the generated disbursement letter (Advice)."""
         application = self.get_object()
         if not application.disbursement_letter_file:
-            # Fallback: Generate it on the fly if we are in ACCEPTED status (Authorization Phase)
-            if application.status == LoanApplication.Status.OFFER_ACCEPTED:
-                pdf_buffer = generate_disbursement_letter(application, request.tenant)
-                filename = f"disbursement_checklist_{application.application_number}.pdf"
-                application.disbursement_letter_file.save(filename, ContentFile(pdf_buffer.getvalue()), save=True)
-                # Rewind buffer for FileResponse
-                pdf_buffer.seek(0)
-                return FileResponse(pdf_buffer, as_attachment=True, filename=filename)
-            
             return Response({'error': 'Disbursement checklist has not been generated yet.'}, status=status.HTTP_404_NOT_FOUND)
         
         return FileResponse(application.disbursement_letter_file.open(), as_attachment=True)
@@ -279,6 +347,14 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
     def accept_offer(self, request, pk=None):
         """Upload signed offer and move to accepted status."""
         application = self.get_object()
+        
+        # Check if offer is expired
+        if application.offer_expires_at and timezone.now() > application.offer_expires_at:
+            return Response(
+                {'error': 'This offer has expired. Please request a new offer letter.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         if 'signed_offer' not in request.FILES:
             return Response({'error': 'Signed offer letter file is required.'}, status=status.HTTP_400_BAD_REQUEST)
             
@@ -298,8 +374,6 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
 
         # 2. Automatically generate the disbursement letter (Checklist)
         try:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"Starting auto-generation of disbursement checklist for {application.application_number}")
             
             pdf_buffer = generate_disbursement_letter(application, request.tenant)
@@ -321,8 +395,6 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                     logger.error(f"Emailing failed: {email_err}")
             
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"CRITICAL: Automation failed during offer acceptance for {application.application_number}: {e}", exc_info=True)
 
         return Response({'status': 'offer_accepted'})
@@ -421,6 +493,16 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 {'error': 'Signed disbursement checklist must be uploaded before disbursement.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Validate refinancing eligibility if applicable
+        if application.refinances_loan:
+            from .services import validate_refinancing_eligibility
+            is_eligible, error_msg = validate_refinancing_eligibility(application)
+            if not is_eligible:
+                return Response(
+                    {'error': error_msg},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         # Import payment services
         from .services.mpesa import MpesaService
@@ -551,6 +633,10 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 repayment_channel=application.repayment_channel,
                 term=application.approved_term,
                 maturity_date=timezone.now().date() + relativedelta(months=application.approved_term),
+                repayment_frequency=application.approved_repayment_frequency,
+                penalty_type=application.penalty_type,
+                penalty_value=application.penalty_value,
+                penalty_grace_period=application.penalty_grace_period,
                 outstanding_balance=application.approved_amount + total_interest,
                 outstanding_principal=application.approved_amount,
                 outstanding_interest=total_interest,
@@ -569,12 +655,15 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             # 3. Handle Documents
             from django.core.files.base import ContentFile
             advice_buffer = generate_disbursement_letter(loan, request.tenant)
-            application.disbursement_letter_file.save(
-                f"advice_{loan.loan_number}.pdf",
-                ContentFile(advice_buffer.read())
-            )
+            if advice_buffer:
+                application.disbursement_letter_file.save(
+                    f"disbursement_checklist_{loan.loan_number}.pdf",
+                    ContentFile(advice_buffer.getvalue()),
+                    save=False
+                )
 
             # 4. Sync with Financials (Treasury & Accounting)
+            # Both standard and refinancing are now handled by record_money_event
             from apps.treasury.services.integrity import record_money_event
             record_money_event(
                 'loan_disbursement',
@@ -599,8 +688,9 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
 class LoanViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Loan.objects.all()
     serializer_class = LoanSerializer
+    lookup_value_regex = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter, BranchScopingFilterBackend]
     filterset_fields = ['borrower', 'product', 'status', 'arrears_category']
     search_fields = [
         'loan_number', 
@@ -614,7 +704,7 @@ class LoanViewSet(viewsets.ReadOnlyModelViewSet):
     def schedule(self, request, pk=None):
         """Get repayment schedule."""
         loan = self.get_object()
-        schedules = loan.schedule.all()
+        schedules = loan.schedules.all()
         serializer = RepaymentScheduleSerializer(schedules, many=True)
         return Response(serializer.data)
     
@@ -629,41 +719,33 @@ class LoanViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(serializer.data)
         
         # POST - Record payment
+        from .services.payment_processor import PaymentProcessor
         serializer = LoanRepaymentCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         amount = serializer.validated_data['amount']
-        allocation = allocate_payment(loan, amount)
+        treasury_code = serializer.validated_data.get('treasury_account_code')
+        payment_method = serializer.validated_data['payment_method']
+        payment_date = serializer.validated_data['payment_date']
+        reference = serializer.validated_data.get('reference_number', '')
+        notes = serializer.validated_data.get('notes', '')
+
+        processor = PaymentProcessor()
         
         with transaction.atomic():
-            repayment = LoanRepayment.objects.create(
-                loan=loan,
+            repayment = processor.record_manual_payment(
+                loan_id=loan.id,
                 amount=amount,
-                payment_date=serializer.validated_data['payment_date'],
-                payment_method=serializer.validated_data['payment_method'],
-                reference_number=serializer.validated_data.get('reference_number', ''),
-                notes=serializer.validated_data.get('notes', ''),
-                received_by=request.user,
-                **allocation
+                payment_method=payment_method,
+                reference=reference,
+                payment_date=payment_date,
+                user=request.user,
+                notes=notes
             )
             
-            # Update loan balances
-            loan.outstanding_principal -= allocation['principal_paid']
-            loan.outstanding_interest -= allocation['interest_paid']
-            loan.outstanding_penalties -= allocation['penalty_paid']
-            loan.outstanding_balance = (
-                loan.outstanding_principal + 
-                loan.outstanding_interest + 
-                loan.outstanding_penalties
-            )
-            loan.last_payment_date = serializer.validated_data['payment_date']
-            
-            # Check if paid off
-            if loan.outstanding_balance <= 0:
-                loan.status = Loan.Status.PAID_OFF
-                loan.closed_at = timezone.now()
-            
-            loan.save()
+            # Post to Accounting (using the newly created repayment)
+            if treasury_code:
+                post_loan_repayment(repayment, cash_account_code=treasury_code)
         
         return Response(LoanRepaymentSerializer(repayment).data, status=status.HTTP_201_CREATED)
     
@@ -682,6 +764,21 @@ class LoanViewSet(viewsets.ReadOnlyModelViewSet):
             filename=f"statement_{loan.loan_number}.pdf",
             content_type='application/pdf'
         )
+
+    @action(detail=True, methods=['get'])
+    def history(self, request, pk=None):
+        """Get activity history for this specific loan."""
+        loan = self.get_object()
+        from django.contrib.contenttypes.models import ContentType
+        
+        loan_ct = ContentType.objects.get_for_model(Loan)
+        logs = ActivityLog.objects.filter(
+            content_type=loan_ct,
+            object_id=str(loan.id)
+        ).order_by('-timestamp')
+        
+        serializer = ActivityLogSerializer(logs, many=True)
+        return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
     def update_arrears(self, request, pk=None):
@@ -689,6 +786,26 @@ class LoanViewSet(viewsets.ReadOnlyModelViewSet):
         loan = self.get_object()
         info = calculate_loan_arrears_status(loan)
         return Response(info)
+    
+    @action(detail=True, methods=['get', 'post'], url_path='comments')
+    def comments(self, request, pk=None):
+        """Get or create comments for a loan."""
+        loan = self.get_object()
+        
+        if request.method == 'GET':
+            comments = loan.comments.all()
+            serializer = LoanCommentSerializer(comments, many=True)
+            return Response(serializer.data)
+        
+        elif request.method == 'POST':
+            serializer = LoanCommentSerializer(data=request.data)
+            if serializer.is_valid():
+                serializer.save(
+                    loan=loan,
+                    author=request.user
+                )
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LoanFeeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -809,37 +926,389 @@ def arrears_reports(request):
 @api_view(['GET'])
 def dashboard_summary(request):
     """ Top-level metrics for dashboard cards """
-    from django.db.models import Sum, Count
+    from django.db.models import Sum, Count, Avg
+    from apps.customers.models import Borrower
+    from apps.users.utils import scope_queryset
     
     today = timezone.now().date()
+    start_of_month = today.replace(day=1)
     
-    # 1. Total Portfolio (Principal Outstanding)
-    portfolio_value = Loan.objects.filter(status=Loan.Status.ACTIVE).aggregate(total=Sum('outstanding_balance'))['total'] or 0
+    # 1. Active Portfolio (Active & Defaulted)
+    active_statuses = [Loan.Status.ACTIVE, Loan.Status.DEFAULTED]
+    active_portfolio_qs = scope_queryset(request.user, Loan.objects.filter(status__in=active_statuses))
     
-    # 2. Active Loans Count
-    active_loans_count = Loan.objects.filter(status=Loan.Status.ACTIVE).count()
+    portfolio_value = active_portfolio_qs.aggregate(total=Sum('outstanding_balance'))['total'] or 0
+    active_loans_count = active_portfolio_qs.count()
     
-    # 3. PAR Percentage
+    # 2. Avg Loan Size (Principal)
+    avg_loan_size = active_portfolio_qs.aggregate(avg=Avg('principal_amount'))['avg'] or 0
+    
+    # 3. PAR Metrics
     par_metrics = calculate_par_metrics()
-    par_percentage = par_metrics.get('par_30_plus_percent', 0)
+    par_percentage = par_metrics.get('par30_percent', 0)
+    par_amount = par_metrics.get('par30_amount', 0)
     
-    # 4. Today's Disbursements
-    disbursements_today = Loan.objects.filter(disbursement_date=today).aggregate(total=Sum('disbursed_amount'))['total'] or 0
-    disbursements_count = Loan.objects.filter(disbursement_date=today).count()
+    # 4. Disbursements
+    disbursement_qs = scope_queryset(request.user, Loan.objects.exclude(disbursement_date__isnull=True))
     
-    # 5. Month-over-Month Change (Mocked for now)
-    # In a real app, we'd compare against last month's snapshots
+    # MTD
+    month_qs = disbursement_qs.filter(
+        disbursement_date__gte=start_of_month,
+        disbursement_date__lte=today
+    )
+    disbursements_this_month = month_qs.aggregate(total=Sum('disbursed_amount'))['total'] or 0
+    disbursements_count_mtd = month_qs.count()
+    
+    # Today
+    today_qs = disbursement_qs.filter(disbursement_date=today)
+    disbursements_today = today_qs.aggregate(total=Sum('disbursed_amount'))['total'] or 0
+    disbursements_count_today = today_qs.count()
+    
+    # 5. Pending Applications
+    pending_applications = scope_queryset(request.user, LoanApplication.objects.filter(
+        status__in=[
+            LoanApplication.Status.SUBMITTED,
+            LoanApplication.Status.UNDER_REVIEW,
+            LoanApplication.Status.APPROVED
+        ]
+    )).count()
+
+    # 6. Borrower Metrics
+    borrower_qs = scope_queryset(request.user, Borrower.objects.all())
+    total_borrowers = borrower_qs.count()
+    new_borrowers_this_month = borrower_qs.filter(created_at__gte=start_of_month).count()
+    verified_borrowers = borrower_qs.filter(verification_status=Borrower.VerificationStatus.VERIFIED).count()
+    
+    # Active Borrowers: Borrowers with at least one active loan
+    active_borrowers = active_portfolio_qs.values('borrower').distinct().count()
+
+    # 7. Portfolio Growth (Mocked)
+    portfolio_growth_percentage = 5.2 
     
     return Response({
         'portfolio_value': portfolio_value,
         'active_loans_count': active_loans_count,
         'par_percentage': par_percentage,
+        'par_amount': par_amount,
+        
+        'disbursements_this_month': disbursements_this_month,
+        'disbursements_count_mtd': disbursements_count_mtd, # New field for Dashboard
+        
         'disbursements_today': disbursements_today,
-        'disbursements_count': disbursements_count,
-        'currency': 'KES' # Should come from tenant settings
+        'disbursements_count': disbursements_count_today, # Back-compat for LoansPage (today)
+        
+        'pending_applications': pending_applications,
+        'avg_loan_size': avg_loan_size,
+        'total_borrowers': total_borrowers,
+        'new_borrowers_this_month': new_borrowers_this_month,
+        'verified_borrowers': verified_borrowers,
+        'active_borrowers': active_borrowers,
+        'portfolio_growth_percentage': portfolio_growth_percentage,
+        'currency': 'KES'
     })
 class LoanGuarantorViewSet(viewsets.ModelViewSet):
     queryset = LoanGuarantor.objects.all()
     serializer_class = LoanGuarantorSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
     filterset_fields = ['application', 'borrower']
+
+    @action(detail=True, methods=['post'], url_path='record-payment')
+    def record_payment(self, request, pk=None):
+        """
+        Record manual payment for a loan.
+        POST /api/v1/loans/loans/{id}/record-payment/
+        Body: {
+            "amount": 5000,
+            "payment_method": "cash|bank|mpesa|cheque",
+            "reference_number": "ABC123",
+            "payment_date": "2026-02-06",
+            "installment_id": "uuid" (optional),
+            "notes": "Payment received at branch"
+        }
+        """
+        from .services.payment_processor import PaymentProcessor
+        from .serializers import LoanRepaymentSerializer
+        
+        loan = self.get_object()
+        
+        # Validate required fields
+        amount = request.data.get('amount')
+        payment_method = request.data.get('payment_method', 'cash')
+        
+        if not amount:
+            return Response(
+                {'error': 'amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            amount = Decimal(str(amount))
+            if amount <= 0:
+                return Response(
+                    {'error': 'amount must be greater than 0'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid amount format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Parse payment date
+        payment_date_str = request.data.get('payment_date')
+        if payment_date_str:
+            try:
+                from datetime import datetime
+                payment_date = datetime.strptime(payment_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'error': 'Invalid date format. Use YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            payment_date = timezone.now().date()
+        
+        # Record payment
+        processor = PaymentProcessor()
+        try:
+            repayment = processor.record_manual_payment(
+                loan_id=loan.id,
+                amount=amount,
+                payment_method=payment_method,
+                reference=request.data.get('reference_number', ''),
+                payment_date=payment_date,
+                user=request.user,
+                installment_id=request.data.get('installment_id'),
+                notes=request.data.get('notes', '')
+            )
+            
+            # Log activity
+            ActivityLog.objects.create(
+                user=request.user,
+                action='record_payment',
+                model_name='Loan',
+                object_id=str(loan.id),
+                details=f"Recorded payment of KES {amount} for loan {loan.loan_number}"
+            )
+            
+            # Refresh loan from database
+            loan.refresh_from_db()
+            
+            serializer = LoanRepaymentSerializer(repayment)
+            return Response({
+                'message': 'Payment recorded successfully',
+                'repayment': serializer.data,
+                'new_balance': float(loan.outstanding_balance),
+                'loan_status': loan.status
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Error recording payment: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Failed to record payment: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'], url_path='initiate-mpesa-payment')
+    def initiate_mpesa_payment(self, request, pk=None):
+        """
+        Initiate M-Pesa STK Push for payment collection.
+        POST /api/v1/loans/loans/{id}/initiate-mpesa-payment/
+        Body: {
+            "phone_number": "254712345678",
+            "amount": 5000,
+            "installment_id": "uuid" (optional)
+        }
+        """
+        loan = self.get_object()
+        phone = request.data.get('phone_number')
+        amount = request.data.get('amount')
+        
+        if not phone or not amount:
+            return Response(
+                {'error': 'phone_number and amount are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get tenant M-Pesa settings
+        from apps.tenants.models import TenantSettings
+        try:
+            tenant_settings = TenantSettings.objects.first()
+        except:
+            tenant_settings = None
+        
+        if not tenant_settings or not tenant_settings.mpesa_consumer_key:
+            return Response(
+                {'error': 'M-Pesa not configured for this tenant'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Initiate STK Push
+        from .services.mpesa import MpesaService
+        mpesa = MpesaService(tenant_settings)
+        
+        try:
+            result = mpesa.initiate_stk_push(
+                phone_number=phone,
+                amount=amount,
+                account_reference=loan.loan_number,
+                description=f"Payment for loan {loan.loan_number}"
+            )
+            
+            if result.get('success'):
+                # Log activity
+                ActivityLog.objects.create(
+                    user=request.user,
+                    action='initiate_mpesa_stk',
+                    model_name='Loan',
+                    object_id=str(loan.id),
+                    details=f"Initiated M-Pesa STK Push for KES {amount} to {phone}"
+                )
+                
+                return Response({
+                    'message': 'STK Push sent successfully',
+                    'checkout_request_id': result.get('checkout_request_id'),
+                    'instructions': 'Customer will receive a prompt on their phone to complete payment'
+                })
+            else:
+                return Response({
+                    'error': result.get('error', 'STK Push failed')
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            logger.error(f"Error initiating M-Pesa payment: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to initiate payment: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])  # M-Pesa doesn't send auth headers
+def mpesa_c2b_validation(request):
+    """
+    Validate incoming C2B payment before M-Pesa completes it.
+    Return ResultCode 0 to accept, non-zero to reject.
+    
+    M-Pesa sends:
+    {
+        "TransactionType": "",
+        "TransID": "LHG31AA5TX",
+        "TransTime": "20170816190243",
+        "TransAmount": "200.00",
+        "BusinessShortCode": "600000",
+        "BillRefNumber": "account",
+        "InvoiceNumber": "",
+        "OrgAccountBalance": "",
+        "ThirdPartyTransID": "",
+        "MSISDN": "254708374149",
+        "FirstName": "John",
+        "MiddleName": "",
+        "LastName": "Doe"
+    }
+    """
+    try:
+        data = request.data
+        logger.info(f"M-Pesa C2B Validation received: {data}")
+        
+        bill_ref = data.get('BillRefNumber', '')
+        amount = float(data.get('TransAmount', 0))
+        
+        # Validate: Check if loan exists
+        from apps.loans.models import Loan
+        try:
+            loan = Loan.objects.get(loan_number=bill_ref)
+            
+            # Reject if loan is already paid off
+            if loan.status == 'paid_off':
+                logger.warning(f"Payment rejected - Loan {bill_ref} already paid off")
+                return Response({
+                    "ResultCode": "C2B00012",
+                    "ResultDesc": "Loan already paid off"
+                })
+            
+            # Reject if loan is written off or defaulted
+            if loan.status in ['written_off', 'defaulted']:
+                logger.warning(f"Payment rejected - Loan {bill_ref} status: {loan.status}")
+                return Response({
+                    "ResultCode": "C2B00013",
+                    "ResultDesc": f"Loan is {loan.status}"
+                })
+                
+        except Loan.DoesNotExist:
+            logger.warning(f"Payment rejected - Loan {bill_ref} not found")
+            return Response({
+                "ResultCode": "C2B00011",
+                "ResultDesc": "Invalid loan number"
+            })
+        
+        # Accept payment
+        logger.info(f"Payment validated for loan {bill_ref}: KES {amount}")
+        return Response({
+            "ResultCode": "0",
+            "ResultDesc": "Accepted"
+        })
+        
+    except Exception as e:
+        logger.error(f"M-Pesa C2B validation error: {str(e)}", exc_info=True)
+        return Response({
+            "ResultCode": "1",
+            "ResultDesc": f"Validation error: {str(e)}"
+        })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def mpesa_c2b_confirmation(request):
+    """
+    Process confirmed C2B payment.
+    This is called after M-Pesa completes the transaction.
+    
+    M-Pesa sends same payload as validation.
+    """
+    try:
+        data = request.data
+        logger.info(f"M-Pesa C2B Confirmation received: {data}")
+        
+        # Parse transaction time
+        trans_time_str = data.get('TransTime', '')
+        try:
+            trans_time = datetime.strptime(trans_time_str, '%Y%m%d%H%M%S')
+            trans_time = timezone.make_aware(trans_time)
+        except (ValueError, TypeError):
+            trans_time = timezone.now()
+        
+        # Create transaction record
+        from apps.loans.models import MpesaC2BTransaction
+        transaction = MpesaC2BTransaction.objects.create(
+            trans_id=data.get('TransID'),
+            trans_time=trans_time,
+            trans_amount=data.get('TransAmount'),
+            business_short_code=data.get('BusinessShortCode'),
+            bill_ref_number=data.get('BillRefNumber', ''),
+            invoice_number=data.get('InvoiceNumber', ''),
+            org_account_balance=data.get('OrgAccountBalance') or None,
+            third_party_trans_id=data.get('ThirdPartyTransID', ''),
+            msisdn=data.get('MSISDN'),
+            first_name=data.get('FirstName', ''),
+            middle_name=data.get('MiddleName', ''),
+            last_name=data.get('LastName', ''),
+            raw_data=data,
+            status='validated'
+        )
+        
+        logger.info(f"M-Pesa C2B transaction created: {transaction.trans_id}")
+        
+        # Process payment asynchronously
+        from apps.loans.tasks import process_mpesa_c2b_payment
+        process_mpesa_c2b_payment.delay(str(transaction.id))
+        
+        return Response({
+            "ResultCode": "0",
+            "ResultDesc": "Accepted"
+        })
+        
+    except Exception as e:
+        logger.error(f"M-Pesa C2B confirmation error: {str(e)}", exc_info=True)
+        return Response({
+            "ResultCode": "1",
+            "ResultDesc": "Processing error"
+        })

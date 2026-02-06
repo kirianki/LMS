@@ -62,6 +62,9 @@ TENANT_APPS = [
     'apps.expenses',
     'apps.accounting',
     'apps.savings',
+    'apps.branches',
+    'apps.auditlog',
+    'apps.notifications',
 ]
 
 # Combined apps for Django discovery
@@ -119,6 +122,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'simple_history.middleware.HistoryRequestMiddleware',
+    'apps.users.middleware.CurrentUserMiddleware',
 ]
 
 # --- CORS Configuration ---

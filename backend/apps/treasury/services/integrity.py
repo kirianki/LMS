@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from apps.treasury.models import Transaction as TreasuryTransaction, CashAccount
@@ -49,10 +50,39 @@ def _get_account(instance, cash_account_id=None, default_type=CashAccount.Accoun
     return account
 
 def _handle_loan_disbursement(loan, cash_account_id=None, user=None):
-    """Synchronize Treasury and GL for disbursement, including withheld fees."""
+    """Synchronize Treasury and GL for disbursement, including withheld fees and refinancing."""
     account = _get_account(loan, cash_account_id)
+    application = loan.application
     
-    # 1. Treasury Recording (Net Disbursed Amount)
+    # 1. State/Refinancing Logic (Calculate final cash movement)
+    is_refinancing = bool(application.refinances_loan)
+    payoff_amount = Decimal('0.00')
+    if is_refinancing:
+        old_loan = application.refinances_loan
+        payoff_amount = (
+            old_loan.outstanding_principal +
+            old_loan.outstanding_interest +
+            old_loan.outstanding_penalties
+        )
+        
+        # Apply state changes (Closing old loan, link and metadata)
+        from apps.loans.services.refinancing import apply_refinancing_state_changes
+        apply_refinancing_state_changes(
+            new_loan=loan,
+            old_loan=old_loan,
+            payoff_amount=payoff_amount,
+            net_to_customer=loan.disbursed_amount - payoff_amount
+        )
+        
+        # Update application metadata for audit trail
+        application.payoff_amount = payoff_amount
+        application.net_disbursement = loan.disbursed_amount - payoff_amount
+        application.save()
+    
+    # Final cash out is the amount remaining after fees (disbursed_amount) AND payoff
+    net_cash_out = loan.disbursed_amount - payoff_amount
+    
+    # 2. Treasury Recording (Actual Money Movement)
     if not TreasuryTransaction.objects.filter(
         related_loan=loan, 
         category=TreasuryTransaction.Category.LOAN_DISBURSEMENT
@@ -65,20 +95,24 @@ def _handle_loan_disbursement(loan, cash_account_id=None, user=None):
         elif loan.disbursement_method == 'bank_transfer':
             dest_info = f" to {details.get('bank_name', '')} {details.get('account_number', '')}"
 
+        desc = f"Disbursement of loan {loan.loan_number} to {loan.borrower}{dest_info}"
+        if is_refinancing:
+            desc = f"Net Refinancing Disbursement: {loan.loan_number} pays off {application.refinances_loan.loan_number}"
+
         TreasuryTransaction.objects.create(
             account=account,
             transaction_type=TreasuryTransaction.TransactionType.DEBIT,
             category=TreasuryTransaction.Category.LOAN_DISBURSEMENT,
-            amount=loan.disbursed_amount,
-            description=f"Disbursement of loan {loan.loan_number} to {loan.borrower}{dest_info}",
+            amount=net_cash_out,
+            description=desc,
             reference=loan.disbursement_reference or loan.loan_number,
             related_loan=loan,
             created_by=user,
             created_at=timezone.now()
         )
 
-    # 2. Record Withheld Deductions as Fee Income
-    total_fees = sum(d.calculated_amount for d in loan.application.deductions.filter(is_withheld=True))
+    # 3. Record Withheld Deductions as Fee Income
+    total_fees = sum(d.calculated_amount for d in application.deductions.filter(is_withheld=True))
     if total_fees > 0 and not TreasuryTransaction.objects.filter(
         related_loan=loan, 
         category=TreasuryTransaction.Category.FEE_INCOME
@@ -95,12 +129,18 @@ def _handle_loan_disbursement(loan, cash_account_id=None, user=None):
             created_at=timezone.now()
         )
 
-    # 3. Accounting (GL Sync)
+    # 4. Accounting (GL Sync)
     # Mapping for GL
     gl_code = '1130' if account.account_type == CashAccount.AccountType.MOBILE_MONEY else '1110'
     
     if not JournalEntry.objects.filter(reference=loan.loan_number).exists():
-        post_loan_disbursement(loan, cash_account_code=gl_code)
+        old_loan_num = application.refinances_loan.loan_number if is_refinancing else None
+        post_loan_disbursement(
+            loan, 
+            cash_account_code=gl_code,
+            payoff_amount=payoff_amount,
+            old_loan_number=old_loan_num
+        )
         
     if total_fees > 0 and not JournalEntry.objects.filter(reference=f"FEE-{loan.loan_number}").exists():
         post_fee_income(loan, total_fees, cash_account_code=gl_code)

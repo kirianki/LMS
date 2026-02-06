@@ -25,10 +25,27 @@ class CollateralSerializer(serializers.ModelSerializer):
             for field in required_fields:
                 if not data.get(field):
                     raise serializers.ValidationError({field: f"Required for {c_type}"})
-                    
+        
         elif c_type == Collateral.CollateralType.LAND_PROPERTY:
             if not data.get('lr_number'):
                 raise serializers.ValidationError({"lr_number": "Required for land/property collateral"})
+        
+        # Tracker Validation
+        if c_type == Collateral.CollateralType.MOTOR_VEHICLE:
+            tracker_installed = data.get('tracker_installed')
+            if tracker_installed:
+                if not data.get('tracker_company') or not data.get('tracker_device_id'):
+                    raise serializers.ValidationError({"tracker_installed": "Tracker company and device ID are required if tracker is installed."})
+
+        # Insurance Validation
+        start_date = data.get('insurance_start_date')
+        expiry_date = data.get('insurance_expiry_date')
+        
+        if (start_date and not expiry_date) or (expiry_date and not start_date):
+            raise serializers.ValidationError("Both insurance start and expiry dates must be provided together.")
+            
+        if start_date and expiry_date and start_date > expiry_date:
+            raise serializers.ValidationError({"insurance_start_date": "Start date cannot be after expiry date."})
         
         # Phase 9: Lifecycle Validation
         status = data.get('status')

@@ -70,9 +70,6 @@
             z-index: -1000;
         }
 
-        vertical-align: middle;
-        }
-
         .data-table th {
             background-color: #1e293b;
             /* Fallback/Default Dark */
@@ -162,7 +159,8 @@
 
         <div style="text-align: right; margin-bottom: 20pt;">
             <strong style="color: {{ primary_color }}; font-weight: bold;">Ref: {{ app_ref }}</strong><br>
-            <strong>Date: {{ date_letter }}</strong>
+            <strong>Date: {{ date_letter }}</strong><br>
+            <strong style="color: #f59e0b; font-size: 8pt;">This offer is valid until: {{ expiry_date }}</strong>
         </div>
 
         <h1
@@ -255,6 +253,13 @@
                     <td style="text-align: right;">({{ d.amount }})</td>
                 </tr>
                 {% endfor %}
+                {% if is_refinancing %}
+                <tr style="color: #ea580c; background: #fff7ed;">
+                    <td>Refinancing Payoff</td>
+                    <td>Loan {{ refinanced_loan_number }}</td>
+                    <td style="text-align: right;">({{ payoff_amount }})</td>
+                </tr>
+                {% endif %}
                 <tr style="background: #f1f5f9; font-weight: bold;">
                     <td colspan="2">NET DISBURSEMENT AMOUNT</td>
                     <td style="text-align: right; color: {{ primary_color }};">KES {{ net_disbursement }}</td>

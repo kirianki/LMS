@@ -19,19 +19,17 @@ class TenantHeaderMiddleware(MiddlewareMixin):
                 tenant_domain = tenant_domain.split('://')[1]
             if '/' in tenant_domain:
                 tenant_domain = tenant_domain.split('/')[0]
-                
-            # Log the override for debugging
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"[TenantMiddleware] Overriding Host '{request.META.get('HTTP_HOST')}' with '{tenant_domain}' from header")
+            
+            # Strip port from tenant_domain if it exists (e.g. localhost:3000 -> localhost)
+            clean_domain = tenant_domain.split(':')[0]
             
             # Let's override the HTTP_HOST so django-tenants sees this as the request host
             # IMPORTANT: If we are in dev (localhost:9090), we must preserve the port!
             original_host = request.META.get('HTTP_HOST', '')
-            if ':' in original_host and ':' not in tenant_domain:
+            if ':' in original_host:
                 port = original_host.split(':')[-1]
-                request.META['HTTP_HOST'] = f"{tenant_domain}:{port}"
+                request.META['HTTP_HOST'] = f"{clean_domain}:{port}"
             else:
-                request.META['HTTP_HOST'] = tenant_domain
+                request.META['HTTP_HOST'] = clean_domain
         # else:
         #    print(f"[TenantMiddleware] No X-Tenant-Domain header. Using Host: {request.META.get('HTTP_HOST')}")

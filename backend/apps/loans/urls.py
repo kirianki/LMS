@@ -6,7 +6,8 @@ from .views import (
     CollectionCaseViewSet, CollectionNoteViewSet,
     PromiseToPayViewSet, RecoveryActionViewSet,
     CollateralDischargeViewSet, LoanGuarantorViewSet,
-    arrears_reports, dashboard_summary
+    arrears_reports, dashboard_summary,
+    mpesa_c2b_validation, mpesa_c2b_confirmation
 )
 
 router = DefaultRouter()
@@ -21,8 +22,14 @@ router.register(r'promises-to-pay', PromiseToPayViewSet)
 router.register(r'recovery-actions', RecoveryActionViewSet)
 router.register(r'collateral-discharges', CollateralDischargeViewSet)
 
+
 urlpatterns = [
     path('arrears_reports/', arrears_reports, name='arrears-reports'),
-    path('dashboard-summary/', dashboard_summary, name='dashboard-summary'),
+    path('dashboard_summary/', dashboard_summary, name='dashboard-summary'),
+    
+    # M-Pesa C2B Webhooks
+    path('mpesa/c2b/validation/', mpesa_c2b_validation, name='mpesa-c2b-validation'),
+    path('mpesa/c2b/confirmation/', mpesa_c2b_confirmation, name='mpesa-c2b-confirmation'),
+    
     path('', include(router.urls)),
 ]

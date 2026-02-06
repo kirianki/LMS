@@ -101,9 +101,17 @@ class Borrower(models.Model):
         blank=True,
         related_name='verified_borrowers'
     )
+    branch = models.ForeignKey('branches.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='borrowers')
     verified_at = models.DateTimeField(null=True, blank=True)
     
-    # Portfolio Management
+    # Branch and Portfolio Management
+    branch = models.ForeignKey(
+        'branches.Branch',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='borrowers'
+    )
     loan_officer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -201,4 +209,102 @@ class CRBReport(models.Model):
     class Meta:
         ordering = ['-created_at']
         verbose_name = "CRB Report"
-        verbose_name_plural = "CRB Reports"
+
+class CustomerDocument(models.Model):
+    """
+    Standard KYC and official documents for borrowers.
+    Includes ID, Passport, KRA PIN, Photos, etc.
+    """
+    class DocumentType(models.TextChoices):
+        NATIONAL_ID = 'national_id', 'National ID'
+        PASSPORT = 'passport', 'Passport'
+        KRA_PIN = 'kra_pin', 'KRA PIN Certificate'
+        PASSPORT_PHOTO = 'passport_photo', 'Passport Photo'
+        DRIVING_LICENSE = 'driving_license', 'Driving License'
+        OTHER = 'other', 'Other'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    borrower = models.ForeignKey(Borrower, on_delete=models.CASCADE, related_name='documents')
+    
+    document_type = models.CharField(max_length=50, choices=DocumentType.choices)
+    file = models.FileField(upload_to='customer_documents/')
+    description = models.TextField(blank=True, help_text="Optional description or notes")
+    
+    expiry_date = models.DateField(null=True, blank=True, help_text="If applicable (e.g., Passport expiry)")
+    is_verified = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verified_documents'
+    )
+    
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='uploaded_documents'
+    )
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"{self.get_document_type_display()} - {self.borrower}"
+
+
+class FinancialStatement(models.Model):
+    """
+    Financial statements (M-Pesa, Bank, etc.) uploaded for analysis.
+    These are distinct from standard docs as they feed into the appraisal engine.
+    """
+    class StatementType(models.TextChoices):
+        MPESA = 'mpesa', 'M-Pesa Statement'
+        BANK = 'bank', 'Bank Statement'
+        OTHER = 'other', 'Other Financial Record'
+
+    class ExtractionStatus(models.TextChoices):
+        PENDING = 'pending', 'Pending Extraction'
+        PROCESSING = 'processing', 'Processing'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    borrower = models.ForeignKey(Borrower, on_delete=models.CASCADE, related_name='financial_statements')
+    
+    statement_type = models.CharField(max_length=50, choices=StatementType.choices)
+    file = models.FileField(upload_to='financial_statements/')
+    password = models.CharField(max_length=100, blank=True, help_text="Password if the PDF is encrypted")
+    
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+    
+    extraction_status = models.CharField(
+        max_length=20, 
+        choices=ExtractionStatus.choices, 
+        default=ExtractionStatus.PENDING
+    )
+    
+    # Raw extracted data (e.g. list of transactions)
+    extracted_data = models.JSONField(default=dict, blank=True)
+    
+    # Calculated insights (e.g. turnover, average daily balance)
+    analysis_results = models.JSONField(default=dict, blank=True)
+    
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"{self.get_statement_type_display()} ({self.period_start} to {self.period_end})"

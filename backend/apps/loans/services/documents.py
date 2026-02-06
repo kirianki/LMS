@@ -1,5 +1,6 @@
 from io import BytesIO
 from datetime import date
+from decimal import Decimal
 import os
 from django.template.loader import render_to_string
 from django.conf import settings
@@ -78,21 +79,32 @@ def generate_offer_letter(loan_application, tenant):
     deductions = loan_application.deductions.all()
     
     total_deductions = sum(d.calculated_amount for d in deductions) if deductions else Decimal('0.00')
-    net_disbursement = loan_application.approved_amount - total_deductions
+    
+    # Refinancing logic
+    is_refinancing = bool(loan_application.refinances_loan)
+    payoff_amount = loan_application.payoff_amount or Decimal('0.00')
+    refinanced_loan_number = loan_application.refinances_loan.loan_number if is_refinancing else None
+    
+    # Net disbursement calculation
+    # For refinancing, net = principal - deductions - payoff
+    net_disbursement = loan_application.approved_amount - total_deductions - payoff_amount
     total_repayable = loan_application.approved_amount + loan_application.calculated_interest
     
+    # Determine payment frequency string
+    freq_raw = getattr(loan_application, 'approved_repayment_frequency', 'monthly')
+    payment_frequency = freq_raw.replace('_', '-').title() # e.g. 'Bi-Annually'
+    
     if product.term_unit == 'months':
-        payment_frequency = 'Monthly'
-        first_payment_date = date.today() + relativedelta(months=1)
-        final_payment_date = date.today() + relativedelta(months=loan_application.approved_term)
+        first_payment_date = date.today() + relativedelta(months=1) # Estimation
     elif product.term_unit == 'weeks':
-        payment_frequency = 'Weekly'
         first_payment_date = date.today() + relativedelta(weeks=1)
-        final_payment_date = date.today() + relativedelta(weeks=loan_application.approved_term)
-    else:  # days
-        payment_frequency = 'Daily'
+    else:
         first_payment_date = date.today() + relativedelta(days=1)
-        final_payment_date = date.today() + relativedelta(days=loan_application.approved_term)
+    
+    # Adjust first payment date logic if frequency != monthly (optional refinement)
+    # Ideally should use the first schedule's date if available:
+    # See below logic using first_schedule 
+
     
     first_schedule = loan_application.provisional_schedules.order_by('due_date').first()
     if first_schedule:
@@ -181,6 +193,7 @@ def generate_offer_letter(loan_application, tenant):
         
         # PRE-FORMATTED STRINGS (ZERO LOGIC)
         'date_letter': ctx_today,
+        'expiry_date': format_date_long(loan_application.offer_expires_at) if loan_application.offer_expires_at else "N/A",
         'app_ref': loan_application.application_number or "N/A",
         
         'loan_officer_name': officer_name,
@@ -205,6 +218,10 @@ def generate_offer_letter(loan_application, tenant):
         'net_disbursement': format_money(net_disbursement),
         'total_repayable': format_money(total_repayable),
         'amount_words': amount_to_words(loan_application.approved_amount).upper(),
+        
+        'payoff_amount': format_money(payoff_amount),
+        'is_refinancing': is_refinancing,
+        'refinanced_loan_number': refinanced_loan_number,
         
         'schedules_list': fmt_schedules,
         
@@ -306,7 +323,23 @@ def generate_loan_statement(loan, tenant):
         'logo_path': ts.logo.path if ts and ts.logo else '',
     })
     
-    html_content = render_to_string('default_loan_statement.html', context)
+    # Support for Custom Document Templates
+    from apps.tenants.models import DocumentTemplate
+    try:
+        custom_template = DocumentTemplate.objects.filter(
+            template_type='loan_statement',
+            is_active=True
+        ).first()
+        
+        if custom_template:
+            from django.template import Template, Context as DjangoContext
+            template = Template(custom_template.content)
+            html_content = template.render(DjangoContext(context))
+        else:
+            html_content = render_to_string('default_loan_statement.html', context)
+    except Exception as e:
+        logger.error(f"Error rendering custom loan statement template: {str(e)}")
+        html_content = render_to_string('default_loan_statement.html', context)
     buffer = BytesIO()
     pisa_status = pisa.CreatePDF(html_content, dest=buffer)
     
@@ -343,13 +376,27 @@ def generate_disbursement_letter(loan_obj, tenant):
     if is_app:
         first_schedule = loan_obj.provisional_schedules.all().order_by('due_date').first()
         disb_date = date.today() # Projected
-        net_amount = (loan_obj.approved_amount or Decimal('0.00')) - sum(d.calculated_amount for d in loan_obj.deductions.all())
+        
+        is_refinancing = bool(loan_obj.refinances_loan)
+        payoff_amount = loan_obj.payoff_amount or Decimal('0.00')
+        refinanced_loan_number = loan_obj.refinances_loan.loan_number if is_refinancing else None
+        
+        total_deductions = sum(d.calculated_amount for d in loan_obj.deductions.all())
+        net_amount = (loan_obj.approved_amount or Decimal('0.00')) - total_deductions - payoff_amount
+        
         method_str = "TBD"
         loan_ref = loan_obj.application_number
     else:
         first_schedule = loan_obj.schedules.all().order_by('due_date').first()
         disb_date = loan_obj.disbursement_date
-        net_amount = loan_obj.disbursed_amount
+        
+        # For Loan object, check application for refinancing info
+        app = loan_obj.application
+        is_refinancing = bool(app.refinances_loan)
+        payoff_amount = app.payoff_amount or Decimal('0.00')
+        refinanced_loan_number = app.refinances_loan.loan_number if is_refinancing else None
+        
+        net_amount = loan_obj.disbursed_amount # Already net in DB
         method_str = loan_obj.get_disbursement_method_display().upper()
         loan_ref = loan_obj.loan_number or "N/A"
 
@@ -402,7 +449,11 @@ def generate_disbursement_letter(loan_obj, tenant):
         'net_amount': format_money(net_amount),
         'installment_amount': format_money(inst_val),
         'first_due_date': format_date_long(first_schedule.due_date) if first_schedule else "N/A",
-        'repayment_channel': loan_obj.get_repayment_channel_display().upper(),
+        'repayment_channel': loan_obj.get_repayment_channel_display().upper() if hasattr(loan_obj, 'repayment_channel') else "N/A",
+        
+        'is_refinancing': is_refinancing,
+        'payoff_amount': format_money(payoff_amount),
+        'refinanced_loan_number': refinanced_loan_number,
     }
     
     # Mix in tenant settings defaults safely
@@ -418,7 +469,23 @@ def generate_disbursement_letter(loan_obj, tenant):
         'logo_path': ts.logo.path if ts and ts.logo else '',
     })
     
-    html_content = render_to_string('default_disbursement_letter.html', context)
+    # Support for Custom Document Templates
+    from apps.tenants.models import DocumentTemplate
+    try:
+        custom_template = DocumentTemplate.objects.filter(
+            template_type='disbursement_letter',
+            is_active=True
+        ).first()
+        
+        if custom_template:
+            from django.template import Template, Context as DjangoContext
+            template = Template(custom_template.content)
+            html_content = template.render(DjangoContext(context))
+        else:
+            html_content = render_to_string('default_disbursement_letter.html', context)
+    except Exception as e:
+        logger.error(f"Error rendering custom disbursement letter template: {str(e)}")
+        html_content = render_to_string('default_disbursement_letter.html', context)
     buffer = BytesIO()
     pisa_status = pisa.CreatePDF(html_content, dest=buffer)
     

@@ -46,6 +46,7 @@ class SavingsAccount(models.Model):
     account_number = models.CharField(max_length=20, unique=True, blank=True)
     borrower = models.ForeignKey('customers.Borrower', on_delete=models.CASCADE, related_name='savings_accounts')
     product = models.ForeignKey(SavingsProduct, on_delete=models.PROTECT, related_name='accounts')
+    branch = models.ForeignKey('branches.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='savings_accounts')
     
     current_balance = models.DecimalField(max_digits=16, decimal_places=2, default=Decimal('0.00'))
     accrued_interest = models.DecimalField(max_digits=16, decimal_places=6, default=Decimal('0.00'))

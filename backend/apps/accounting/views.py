@@ -22,6 +22,10 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
     queryset = ChartOfAccount.objects.all()
     serializer_class = ChartOfAccountSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
+    filterset_fields = ['account_type', 'is_active', 'parent']
+    search_fields = ['code', 'name', 'description']
+    ordering_fields = ['code', 'name', 'account_type', 'balance']
+    ordering = ['code']
     
     @action(detail=False, methods=['post'])
     def seed(self, request):

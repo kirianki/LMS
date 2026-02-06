@@ -6,10 +6,16 @@ from .models import CashAccount, Transaction, DailySnapshot
 from .serializers import CashAccountSerializer, TransactionSerializer, DailySnapshotSerializer
 
 
+from apps.users.permissions import HasRolePermission
+
 class CashAccountViewSet(viewsets.ModelViewSet):
     queryset = CashAccount.objects.all()
     serializer_class = CashAccountSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated, HasRolePermission]
+    filterset_fields = ['account_type', 'is_active']
+    search_fields = ['name', 'bank_name', 'account_number']
+    ordering_fields = ['name', 'current_balance']
+    ordering = ['name']
 
 
 class TransactionViewSet(viewsets.ModelViewSet):

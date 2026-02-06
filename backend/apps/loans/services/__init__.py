@@ -12,3 +12,7 @@ from .documents import (
 )
 from .mpesa import MpesaService
 from .sms import SMSService, send_loan_reminder_sms, send_overdue_reminder_sms
+from .refinancing import (
+    process_loan_refinancing,
+    validate_refinancing_eligibility,
+)

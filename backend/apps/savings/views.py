@@ -1,4 +1,6 @@
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, status, permissions, filters
+from django_filters.rest_framework import DjangoFilterBackend
+from apps.users.filters import BranchScopingFilterBackend
 from apps.users.permissions import HasRolePermission
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -18,6 +20,7 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
     queryset = SavingsAccount.objects.all()
     serializer_class = SavingsAccountSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
+    filter_backends = [DjangoFilterBackend, BranchScopingFilterBackend]
     filterset_fields = ['borrower', 'status']
 
     @action(detail=True, methods=['post'])

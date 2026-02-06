@@ -22,6 +22,14 @@ class LoanProduct(models.Model):
     class FeeType(models.TextChoices):
         FIXED = 'fixed', 'Fixed Amount'
         PERCENTAGE = 'percentage', 'Percentage of Principal'
+
+    class RepaymentFrequency(models.TextChoices):
+        WEEKLY = 'weekly', 'Weekly'
+        MONTHLY = 'monthly', 'Monthly'
+        QUARTERLY = 'quarterly', 'Quarterly'
+        BI_ANNUALLY = 'bi_annually', 'Bi-Annually'
+        ANNUALLY = 'annually', 'Annually'
+        BULLET = 'bullet', 'Bullet (One-off at end)'
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
@@ -56,6 +64,29 @@ class LoanProduct(models.Model):
         ],
         default='per_year',
         help_text="Default interest calculation period"
+    )
+
+    repayment_frequency = models.CharField(
+        max_length=20,
+        choices=RepaymentFrequency.choices,
+        default=RepaymentFrequency.MONTHLY,
+        help_text="Default frequency of repayment installments"
+    )
+
+    # Penalty Config
+    penalty_type = models.CharField(
+        max_length=20, 
+        choices=FeeType.choices, 
+        default=FeeType.FIXED,
+        help_text="How late payment penalties are calculated"
+    )
+    penalty_value = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00'),
+        help_text="Penalty amount or percentage"
+    )
+    penalty_grace_period = models.PositiveIntegerField(
+        default=0,
+        help_text="Days after due date before penalty applies"
     )
     
     # Term
@@ -112,6 +143,7 @@ class LoanApplication(models.Model):
     
     borrower = models.ForeignKey('customers.Borrower', on_delete=models.CASCADE, related_name='loan_applications')
     product = models.ForeignKey(LoanProduct, on_delete=models.PROTECT, related_name='applications')
+    branch = models.ForeignKey('branches.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='loan_applications')
     
     # Requested amounts
     requested_amount = models.DecimalField(
@@ -163,6 +195,26 @@ class LoanApplication(models.Model):
         ],
         null=True, blank=True,
         help_text="Period for interest calculation"
+    )
+
+    approved_repayment_frequency = models.CharField(
+        max_length=20,
+        choices=LoanProduct.RepaymentFrequency.choices,
+        default=LoanProduct.RepaymentFrequency.MONTHLY,
+        help_text="Frequency of repayment installments"
+    )
+    
+    # Penalty Config (Snapshot)
+    penalty_type = models.CharField(
+        max_length=20, 
+        choices=LoanProduct.FeeType.choices, 
+        default=LoanProduct.FeeType.FIXED
+    )
+    penalty_value = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00')
+    )
+    penalty_grace_period = models.PositiveIntegerField(
+        default=0
     )
     
     # Fee Configuration (calculated or fixed)
@@ -232,9 +284,35 @@ class LoanApplication(models.Model):
         related_name='loan_applications'
     )
     
+    
+    # Refinancing
+    refinances_loan = models.ForeignKey(
+        'Loan',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='refinanced_by_applications',
+        help_text="The loan this application will pay off"
+    )
+    payoff_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Amount allocated to pay off the existing loan"
+    )
+    net_disbursement = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Actual amount disbursed to customer (principal - payoff)"
+    )
+    
     # Timestamps
     submitted_at = models.DateTimeField(null=True, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
+    offer_expires_at = models.DateTimeField(null=True, blank=True, help_text="Validity of the offer letter")
     disbursed_at = models.DateTimeField(null=True, blank=True)
     
     created_at = models.DateTimeField(default=timezone.now)
@@ -286,6 +364,7 @@ class Loan(models.Model):
     application = models.OneToOneField(LoanApplication, on_delete=models.PROTECT, related_name='loan')
     borrower = models.ForeignKey('customers.Borrower', on_delete=models.CASCADE, related_name='loans')
     product = models.ForeignKey(LoanProduct, on_delete=models.PROTECT, related_name='loans')
+    branch = models.ForeignKey('branches.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='loans')
     
     # Principal and calculated amounts
     principal_amount = models.DecimalField(max_digits=12, decimal_places=2)
@@ -333,6 +412,25 @@ class Loan(models.Model):
     term = models.PositiveIntegerField()
     maturity_date = models.DateField()
     
+    repayment_frequency = models.CharField(
+        max_length=20,
+        choices=LoanProduct.RepaymentFrequency.choices,
+        default=LoanProduct.RepaymentFrequency.MONTHLY
+    )
+    
+    # Penalty Config (Snapshot)
+    penalty_type = models.CharField(
+        max_length=20, 
+        choices=LoanProduct.FeeType.choices, 
+        default=LoanProduct.FeeType.FIXED
+    )
+    penalty_value = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00')
+    )
+    penalty_grace_period = models.PositiveIntegerField(
+        default=0
+    )
+    
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     
     # Outstanding balances (updated on each payment)
@@ -348,6 +446,25 @@ class Loan(models.Model):
         choices=ArrearsCategory.choices,
         default=ArrearsCategory.CURRENT,
         help_text="Arrears aging bucket"
+    )
+    
+    # Refinancing tracking
+    is_refinanced = models.BooleanField(
+        default=False,
+        help_text="True if this loan was paid off via refinancing"
+    )
+    refinanced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this loan was refinanced"
+    )
+    refinanced_by_loan = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='refinanced_loans',
+        help_text="The new loan that paid off this one"
     )
     
     last_payment_date = models.DateField(null=True, blank=True)
@@ -810,3 +927,97 @@ class CreditScoringRule(models.Model):
     def applies_to_score(self, score):
         """Check if this rule applies to the given credit score."""
         return self.min_credit_score <= score <= self.max_credit_score
+
+
+class LoanComment(models.Model):
+    """Comments and discussions on loan records."""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    loan = models.ForeignKey(Loan, on_delete=models.CASCADE, related_name='comments')
+    
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='loan_comments'
+    )
+    
+    comment = models.TextField(help_text="Comment content")
+    
+    # Optional: Comment type for categorization
+    comment_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('general', 'General Note'),
+            ('collection', 'Collection Note'),
+            ('internal', 'Internal Discussion'),
+            ('customer', 'Customer Communication'),
+        ],
+        default='general'
+    )
+    
+    # Optional: Visibility control
+    is_internal = models.BooleanField(
+        default=True,
+        help_text="If true, only staff can see this comment"
+    )
+    
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    history = HistoricalRecords()
+    
+    def __str__(self):
+        author_name = self.author.get_full_name() if self.author else 'System'
+        return f"{self.loan.loan_number} - Comment by {author_name} at {self.created_at}"
+    
+    class Meta:
+        ordering = ['-created_at']
+
+class MpesaC2BTransaction(models.Model):
+    """Track incoming M-Pesa C2B payments from customers."""
+    
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending Validation'
+        VALIDATED = 'validated', 'Validated'
+        CONFIRMED = 'confirmed', 'Confirmed & Processed'
+        FAILED = 'failed', 'Failed'
+        REJECTED = 'rejected', 'Rejected'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # M-Pesa transaction details
+    trans_id = models.CharField(max_length=50, unique=True, help_text="M-Pesa receipt number")
+    trans_time = models.DateTimeField()
+    trans_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    business_short_code = models.CharField(max_length=20)
+    bill_ref_number = models.CharField(max_length=50, help_text="Loan number or account reference")
+    invoice_number = models.CharField(max_length=50, blank=True)
+    org_account_balance = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    third_party_trans_id = models.CharField(max_length=50, blank=True)
+    msisdn = models.CharField(max_length=15, help_text="Customer phone number")
+    first_name = models.CharField(max_length=100, blank=True)
+    middle_name = models.CharField(max_length=100, blank=True)
+    last_name = models.CharField(max_length=100, blank=True)
+    
+    # Processing status
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    loan = models.ForeignKey('Loan', on_delete=models.SET_NULL, null=True, blank=True, related_name='mpesa_c2b_transactions')
+    repayment = models.OneToOneField('LoanRepayment', on_delete=models.SET_NULL, null=True, blank=True, related_name='mpesa_c2b_transaction')
+    
+    # Raw callback data
+    raw_data = models.JSONField()
+    error_message = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    
+    history = HistoricalRecords()
+    
+    def __str__(self):
+        return f"{self.trans_id} - KES {self.trans_amount} ({self.get_status_display()})"
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "M-Pesa C2B Transaction"
+        verbose_name_plural = "M-Pesa C2B Transactions"

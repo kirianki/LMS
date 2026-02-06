@@ -24,6 +24,14 @@ class CashAccount(models.Model):
     current_balance = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     
     is_active = models.BooleanField(default=True)
+    coa_account = models.ForeignKey(
+        'accounting.ChartOfAccount', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='cash_accounts',
+        help_text="Link to the Chart of Accounts ledger"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

@@ -3,7 +3,7 @@ from django.db import transaction
 from django_tenants.utils import schema_context
 from django.contrib.auth import get_user_model
 from apps.users.models import Role
-from .models import Tenant, Domain, Module, Subscription, TenantSettings
+from .models import Tenant, Domain, Module, Subscription, TenantSettings, DocumentTemplate
 
 User = get_user_model()
 
@@ -132,3 +132,13 @@ class ModuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Module
         fields = ('id', 'name', 'description')
+class DocumentTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DocumentTemplate
+        fields = '__all__'
+        read_only_fields = ('tenant',)
+
+    def create(self, validated_data):
+        from django.db import connection
+        validated_data['tenant'] = connection.tenant
+        return super().create(validated_data)

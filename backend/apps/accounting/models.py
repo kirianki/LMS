@@ -56,6 +56,7 @@ class JournalEntry(models.Model):
     
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    branch = models.ForeignKey('branches.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='journal_entries')
     
     history = HistoricalRecords()
     

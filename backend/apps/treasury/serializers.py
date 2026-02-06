@@ -3,6 +3,9 @@ from .models import CashAccount, Transaction, DailySnapshot
 
 
 class CashAccountSerializer(serializers.ModelSerializer):
+    coa_account_code = serializers.ReadOnlyField(source='coa_account.code')
+    coa_account_name = serializers.ReadOnlyField(source='coa_account.name')
+    
     class Meta:
         model = CashAccount
         fields = '__all__'

@@ -77,6 +77,8 @@ class TenantSettings(models.Model):
     tenant = models.OneToOneField(Tenant, on_delete=models.CASCADE, related_name='settings')
     is_ai_enabled = models.BooleanField(default=False)
     is_automation_enabled = models.BooleanField(default=False)
+    is_branches_enabled = models.BooleanField(default=True)
+    max_branches_limit = models.IntegerField(default=10)
     max_valuers_limit = models.IntegerField(default=5)
     
     # M-Pesa Configuration
@@ -87,6 +89,7 @@ class TenantSettings(models.Model):
     mpesa_passkey = models.CharField(max_length=255, blank=True)
     mpesa_initiator_name = models.CharField(max_length=100, blank=True)
     mpesa_initiator_password = models.CharField(max_length=255, blank=True)
+    mpesa_security_credential = models.TextField(blank=True, help_text='Encrypted security credential for B2C/disbursements')
     mpesa_callback_url = models.URLField(blank=True)
     
     # Bank API Configuration (for automated disbursements)
@@ -158,7 +161,8 @@ class TenantSettings(models.Model):
 class DocumentTemplate(models.Model):
     class TemplateType(models.TextChoices):
         OFFER_LETTER = 'offer_letter', 'Offer Letter'
-        DISBURSEMENT_LETTER = 'disbursement_letter', 'Disbursement Checklist'
+        DISBURSEMENT_LETTER = 'disbursement_letter', 'Disbursement Letter'
+        LOAN_STATEMENT = 'loan_statement', 'Loan Statement'
         OTHER = 'other', 'Other'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

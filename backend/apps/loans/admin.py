@@ -4,7 +4,7 @@ from .models import (
     LoanProduct, LoanApplication, Loan,
     RepaymentSchedule, LoanRepayment, LoanFee,
     CollectionCase, CollectionNote, PromiseToPay, RecoveryAction,
-    CreditScoringRule
+    CreditScoringRule, LoanComment
 )
 
 
@@ -182,3 +182,28 @@ class CreditScoringRuleAdmin(SimpleHistoryAdmin):
             'fields': ('processing_fee_percent',)
         }),
     )
+
+
+@admin.register(LoanComment)
+class LoanCommentAdmin(SimpleHistoryAdmin):
+    list_display = ('loan', 'author', 'comment_type', 'is_internal', 'created_at')
+    list_filter = ('comment_type', 'is_internal', 'created_at')
+    search_fields = ('loan__loan_number', 'comment', 'author__username', 'author__first_name', 'author__last_name')
+    readonly_fields = ('author', 'created_at', 'updated_at')
+    fieldsets = (
+        (None, {
+            'fields': ('loan', 'author', 'comment_type', 'is_internal')
+        }),
+        ('Content', {
+            'fields': ('comment',)
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.author = request.user
+        super().save_model(request, obj, form, change)

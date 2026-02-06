@@ -307,3 +307,119 @@ def check_payment_promises():
                 
     logger.info(f"Checked promises across all tenants. {total_broken} promises marked as BROKEN.")
     return total_broken
+
+@shared_task
+def process_mpesa_c2b_payment(transaction_id):
+    """
+    Process M-Pesa C2B payment and allocate to loan installments.
+    
+    Args:
+        transaction_id: UUID of MpesaC2BTransaction
+    """
+    from apps.loans.models import MpesaC2BTransaction, Loan, LoanRepayment
+    from apps.loans.services.payment_processor import PaymentProcessor
+    
+    try:
+        transaction = MpesaC2BTransaction.objects.get(id=transaction_id)
+        
+        # Find loan by bill reference number (loan number)
+        try:
+            loan = Loan.objects.get(loan_number=transaction.bill_ref_number)
+            transaction.loan = loan
+        except Loan.DoesNotExist:
+            transaction.status = 'failed'
+            transaction.error_message = f"Loan not found: {transaction.bill_ref_number}"
+            transaction.save()
+            logger.error(f"M-Pesa C2B: Loan not found - {transaction.bill_ref_number}")
+            return
+        
+        # Create loan repayment record
+        repayment = LoanRepayment.objects.create(
+            loan=loan,
+            amount=transaction.trans_amount,
+            payment_date=transaction.trans_time.date(),
+            payment_method='mpesa',
+            reference_number=transaction.trans_id,
+            received_by=None,  # Automatic payment
+            notes=f"M-Pesa C2B payment from {transaction.msisdn} ({transaction.first_name} {transaction.last_name})"
+        )
+        
+        transaction.repayment = repayment
+        
+        # Allocate payment to installments
+        processor = PaymentProcessor()
+        allocation = processor.allocate_payment_to_installments(
+            loan=loan,
+            amount=transaction.trans_amount,
+            payment_date=transaction.trans_time.date(),
+            repayment=repayment
+        )
+        
+        # Update repayment allocation breakdown
+        repayment.principal_paid = allocation['principal']
+        repayment.interest_paid = allocation['interest']
+        repayment.penalty_paid = allocation['penalties']
+        repayment.fee_paid = allocation['fees']
+        repayment.save()
+        
+        transaction.status = 'confirmed'
+        transaction.processed_at = timezone.now()
+        transaction.save()
+        
+        logger.info(f"M-Pesa C2B payment processed: {transaction.trans_id} for loan {loan.loan_number}")
+        
+        # Send confirmation SMS to borrower
+        send_payment_confirmation_sms.delay(
+            phone=transaction.msisdn,
+            amount=float(transaction.trans_amount),
+            loan_number=loan.loan_number,
+            receipt=transaction.trans_id,
+            new_balance=float(loan.outstanding_balance)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing M-Pesa C2B payment {transaction_id}: {str(e)}", exc_info=True)
+        try:
+            transaction = MpesaC2BTransaction.objects.get(id=transaction_id)
+            transaction.status = 'failed'
+            transaction.error_message = str(e)
+            transaction.save()
+        except:
+            pass
+
+
+@shared_task
+def send_payment_confirmation_sms(phone, amount, loan_number, receipt, new_balance):
+    """
+    Send SMS confirmation to borrower after successful payment.
+    
+    Args:
+        phone: Borrower phone number
+        amount: Payment amount
+        loan_number: Loan number
+        receipt: M-Pesa receipt number
+        new_balance: New outstanding balance
+    """
+    try:
+        from apps.tenants.models import TenantSettings
+        from apps.loans.services.sms import SMSService
+        
+        settings = TenantSettings.objects.first()
+        if not settings or not settings.sms_enabled:
+            return
+        
+        message = (
+            f"Payment of KES {amount:,.2f} received for loan {loan_number}. "
+            f"Receipt: {receipt}. New balance: KES {new_balance:,.2f}. Thank you!"
+        )
+        
+        sms_service = SMSService(settings)
+        result = sms_service.send_sms(phone, message)
+        
+        if result.get('success'):
+            logger.info(f"Payment confirmation SMS sent to {phone}")
+        else:
+            logger.warning(f"Failed to send confirmation SMS: {result.get('error')}")
+            
+    except Exception as e:
+        logger.error(f"Error sending payment confirmation SMS: {str(e)}")

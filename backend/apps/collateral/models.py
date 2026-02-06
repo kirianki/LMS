@@ -57,6 +57,10 @@ class Collateral(models.Model):
     liquidation_date = models.DateField(null=True, blank=True)
     liquidation_value = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     description = models.TextField(blank=True)
+    
+    # Insurance Details
+    insurance_start_date = models.DateField(null=True, blank=True)
+    insurance_expiry_date = models.DateField(null=True, blank=True, help_text="Date when current insurance cover expires")
 
     # --- Asset-Specific Fields ---
     
@@ -69,6 +73,12 @@ class Collateral(models.Model):
     engine_number = models.CharField(max_length=50, blank=True)
     year_of_manufacture = models.PositiveIntegerField(null=True, blank=True)
     logbook_number = models.CharField(max_length=50, blank=True)
+    
+    # Tracker Details
+    tracker_installed = models.BooleanField(default=False)
+    tracker_company = models.CharField(max_length=100, blank=True)
+    tracker_device_id = models.CharField(max_length=100, blank=True)
+    tracker_installation_date = models.DateField(null=True, blank=True)
 
     # Land/Property details
     lr_number = models.CharField(max_length=100, blank=True, verbose_name="LR/Parcel Number")
@@ -87,6 +97,7 @@ class Collateral(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    branch = models.ForeignKey('branches.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='collaterals')
     
     history = HistoricalRecords()
 
