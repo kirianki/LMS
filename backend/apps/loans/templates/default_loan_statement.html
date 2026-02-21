@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<!-- ANTIGRAVITY_RELOAD_V3 -->
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm 1.5cm 2.5cm 1.5cm;
+
+            @frame footer_frame {
+                -pdf-frame-content: footer_content;
+                left: 1.5cm;
+                width: 18cm;
+                top: 27cm;
+                height: 1.2cm;
+            }
+        }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 9pt;
+            color: #1e293b;
+            line-height: 1.4;
+        }
+
+        .letterhead {
+            width: 100%;
+            margin-bottom: 20pt;
+        }
+
+        .company-info {
+            width: 50%;
+            vertical-align: top;
+        }
+
+        .statement-header {
+            width: 50%;
+            text-align: right;
+            vertical-align: top;
+        }
+
+        .title {
+            font-size: 22pt;
+            font-weight: bold;
+            color: #0f172a;
+            margin: 0;
+            letter-spacing: 1px;
+        }
+
+        .meta-text {
+            font-size: 9pt;
+            color: #64748b;
+            margin-top: 5pt;
+        }
+
+        .info-table {
+            width: 100%;
+            margin-bottom: 15pt;
+            border-spacing: 10pt 0;
+            margin-left: -10pt;
+        }
+
+        .info-cell {
+            width: 50%;
+            vertical-align: top;
+        }
+
+        .info-box {
+            border: 0.5pt solid #e2e8f0;
+            background-color: #f8fafc;
+            padding: 8pt;
+            border-radius: 4pt;
+        }
+
+        .box-title {
+            font-size: 8pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #64748b;
+            border-bottom: 0.5pt solid #cbd5e1;
+            padding-bottom: 3pt;
+            margin-bottom: 5pt;
+        }
+
+        .data-row {
+            margin-bottom: 3pt;
+        }
+
+        .lbl {
+            font-weight: bold;
+            color: #475569;
+            width: 80pt;
+            display: inline-block;
+        }
+
+        .val {
+            color: #0f172a;
+        }
+
+        .summary-bar {
+            width: 100%;
+            background-color: #f1f5f9;
+            border: 0.5pt solid #cbd5e1;
+            border-radius: 4pt;
+            margin-bottom: 20pt;
+        }
+
+        .summary-table {
+            width: 100%;
+            padding: 10pt;
+        }
+
+        .summary-label {
+            font-size: 7.5pt;
+            color: #64748b;
+            text-transform: uppercase;
+            margin-bottom: 2pt;
+        }
+
+        .summary-value {
+            font-size: 13pt;
+            font-weight: bold;
+        }
+
+        .transactions {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            /* Keep fixed for alignment */
+        }
+
+        .transactions th {
+            color: #ffffff;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 7.5pt;
+            padding: 0;
+        }
+
+        .transactions th div {
+            padding: 8pt 2pt;
+            /* Reduced horizontal padding */
+        }
+
+        .transactions td {
+            padding: 6pt 2pt;
+            border-bottom: 0.5pt solid #e2e8f0;
+            font-size: 8pt;
+            vertical-align: top;
+            word-wrap: break-word;
+            /* Ensure everything can wrap */
+        }
+
+        .ref-cell {
+            word-break: break-all;
+            /* Force break for very long strings */
+            word-wrap: break-word;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .bold {
+            font-weight: bold;
+        }
+
+        #footer_content {
+            font-size: 8pt;
+            color: #94a3b8;
+            text-align: center;
+            border-top: 0.5pt solid #e2e8f0;
+            padding-top: 5pt;
+        }
+
+        .arrears-alert {
+            background-color: #fee2e2;
+            color: #b91c1c;
+            padding: 6pt 10pt;
+            border-radius: 4pt;
+            font-size: 8.5pt;
+            margin-top: 5pt;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="footer_content">
+        {{ company_name }} - {{ footer_text }} | Page <pdf:pagenumber>
+    </div>
+
+    <!-- Top Letterhead -->
+    <table class="letterhead">
+        <tr>
+            <td class="company-info">
+                {% if logo_path %}
+                <img src="{{ logo_path }}" style="max-width: 180px; max-height: 70px;">
+                {% else %}
+                <h1 style="color: {{ primary_color }}; margin: 0; font-size: 18pt; text-transform: uppercase;">{{
+                    company_name }}</h1>
+                {% endif %}
+                <div style="font-size: 8.5pt; color: #475569; margin-top: 5pt;">
+                    {{ company_address }}<br>
+                    Tel: {{ company_phone }}
+                </div>
+            </td>
+            <td class="statement-header">
+                <div class="title">STATEMENT</div>
+                <div class="meta-text">
+                    <strong>Generated:</strong> {{ today_date }}<br>
+                    <strong>Loan No:</strong> {{ loan_number }}
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Info Section -->
+    <table class="info-table">
+        <tr>
+            <td class="info-cell">
+                <div class="info-box">
+                    <div class="box-title">Borrower Information</div>
+                    <div class="data-row"><strong>Name:</strong> {{ borrower_name }}</div>
+                    <div class="data-row"><strong>ID/Reg:</strong> {{ borrower_id }}</div>
+                    <div class="data-row"><strong>Phone:</strong> {{ borrower_phone }}</div>
+                    <div class="data-row"><strong>Address:</strong> {{ borrower_address }}</div>
+                </div>
+            </td>
+            <td class="info-cell">
+                <div class="info-box">
+                    <div class="box-title">Loan Parameters</div>
+                    <div class="data-row"><strong>Product:</strong> {{ product_name }}</div>
+                    <div class="data-row"><strong>Disbursed:</strong> {{ disbursed_date }}</div>
+                    <div class="data-row"><strong>Term:</strong> {{ term }}</div>
+                    <div class="data-row"><strong>Rate:</strong> {{ interest_rate }}</div>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Financial Summary -->
+    <div class="summary-bar">
+        <table class="summary-table">
+            <tr>
+                <td style="width: 34%;">
+                    <div class="summary-label">Outstanding Balance</div>
+                    <div class="summary-value" style="color: {{ primary_color }};">KES {{ outstanding_balance }}</div>
+                </td>
+                <td style="width: 33%;">
+                    <div class="summary-label">Principal Amount</div>
+                    <div class="summary-value">KES {{ principal }}</div>
+                </td>
+                <td style="width: 33%;">
+                    <div class="summary-label">Total Credits</div>
+                    <div class="summary-value">KES {{ total_credits }}</div>
+                </td>
+            </tr>
+            {% if arrears_days > 0 %}
+            <tr>
+                <td colspan="3">
+                    <div class="arrears-alert">
+                        <strong>Arrears Alert:</strong> Account is <strong>{{ arrears_days }} days</strong> overdue.
+                        Penalty: <strong>KES {{ penalty_due }}</strong>
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
+        </table>
+    </div>
+
+    <!-- Transactions -->
+    <div style="font-weight: bold; margin-bottom: 8pt; color: #475569; font-size: 10pt; text-transform: uppercase;">
+        Transaction History</div>
+    <table class="transactions">
+        <thead>
+            <tr style="background-color: #1e3a8a;"> <!-- Static blue for reliability -->
+                <th style="width: 14%;">
+                    <div style="text-align: left;">Date</div>
+                </th>
+                <th style="width: 18%;">
+                    <div style="text-align: left;">Description</div>
+                </th>
+                <th style="width: 28%;">
+                    <div style="text-align: left;">Reference</div>
+                </th>
+                <th style="width: 13%;">
+                    <div style="text-align: right;">Debit</div>
+                </th>
+                <th style="width: 13%;">
+                    <div style="text-align: right;">Credit</div>
+                </th>
+                <th style="width: 14%;">
+                    <div style="text-align: right;">Balance</div>
+                </th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in transactions %}
+            <tr>
+                <td style="width: 14%;">{{ t.date }}</td>
+                <td style="width: 18%;">{{ t.description }}</td>
+                <td style="width: 28%;" class="ref-cell">{{ t.reference }}</td>
+                <td style="width: 13%;" class="text-right">{{ t.debit }}</td>
+                <td style="width: 13%;" class="text-right">{{ t.credit }}</td>
+                <td style="width: 14%;" class="text-right bold">{{ t.balance }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 30pt; color: #94a3b8;">No transactions recorded for
+                    this period.</td>
+            </tr>
+            {% endfor %}
+            <tr style="background-color: #f8fafc; font-weight: bold; border-top: 1pt solid #cbd5e1;">
+                <td colspan="3" class="text-right" style="padding: 8pt;">TOTAL DEBITS / CREDITS</td>
+                <td class="text-right" style="padding: 8pt; width: 13%;">{{ total_debits }}</td>
+                <td class="text-right" style="padding: 8pt; width: 13%;">{{ total_credits }}</td>
+                <td style="width: 14%;"></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div style="margin-top: 30pt; font-size: 8.5pt; color: #64748b; font-style: italic;">
+        Disclaimer: This statement is an accurate record of your account as of the date of issue. Please report any
+        discrepancies to our support team within 48 hours.
+    </div>
+</body>
+
+</html>

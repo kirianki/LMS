@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 1.5cm 2.5cm 2.5cm 2.5cm;
+
+            @frame footer_frame {
+                -pdf-frame-content: footer_content;
+                left: 2.5cm;
+                width: 16cm;
+                top: 27cm;
+                height: 1.2cm;
+            }
+        }
+
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 9pt;
+            color: #0f172a;
+            line-height: 1.5;
+            background: #fff;
+        }
+
+        .letterhead {
+            width: 100%;
+            margin-bottom: 25pt;
+            padding-bottom: 12pt;
+        }
+
+        .logo-box {
+            width: 45%;
+        }
+
+        .contact-box {
+            width: 55%;
+            text-align: right;
+            font-size: 8.5pt;
+            color: #475569;
+            padding-right: 15pt;
+        }
+
+        .clause {
+            margin-bottom: 10pt;
+            text-align: justify;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12pt 0;
+        }
+
+        .data-table td,
+        .data-table th {
+            padding: 7pt 10pt;
+            border: 0.5pt solid #e2e8f0;
+        }
+
+        /* Watermark Styling */
+        #watermark {
+            position: absolute;
+            top: 5cm;
+            left: 2cm;
+            width: 17cm;
+            opacity: 0.05;
+            z-index: -1000;
+        }
+
+        .data-table th {
+            background-color: #1e293b;
+            /* Fallback/Default Dark */
+            color: #ffffff;
+            font-weight: bold;
+            text-align: left;
+            font-size: 8pt;
+            text-transform: uppercase;
+            border: 0.5pt solid #e2e8f0;
+        }
+
+        .label {
+            font-weight: bold;
+            width: 35%;
+            background: #f8fafc;
+            color: #334155;
+        }
+
+        .value {
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        .sig-section {
+            margin-top: 30pt;
+            width: 100%;
+        }
+
+        .sig-box {
+            vertical-align: top;
+            width: 45%;
+            padding-top: 10pt;
+        }
+
+        .sig-line {
+            border-bottom: 1.2pt solid #1e293b;
+            margin-bottom: 8pt;
+            height: 35pt;
+            width: 100%;
+        }
+
+        #footer_content {
+            font-size: 7.5pt;
+            color: #64748b;
+            font-weight: 600;
+            text-align: center;
+            border-top: 0.8pt solid #e2e8f0;
+            padding-top: 6pt;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="footer_content">
+        CUSTOMER: {{ borrower_name }} | ID: {{ footer_id_val }} | SIGN: ____________________ | PAGE <pdf:pagenumber> OF
+            <pdf:pagecount>
+    </div>
+
+    <div class="container">
+        <!-- Letterhead -->
+        <table class="letterhead">
+            <tr>
+                <td class="logo-box">
+                    {% if logo_path %}
+                    <img src="{{ logo_path }}" style="max-width: 220px; max-height: 90px;">
+                    {% else %}
+                    <h1 style="color: {{ primary_color }}; margin:0; font-size: 18pt; text-transform: uppercase;">{{
+                        company_name }}</h1>
+                    {% endif %}
+                    <div
+                        style="font-size: 8pt; color: {{ secondary_color }}; margin-top: 4pt; font-weight: bold; font-style: italic;">
+                        {{ company_tagline }}</div>
+                </td>
+                <td class="contact-box" style="border-right: 4pt solid {{ primary_color }};">
+                    <strong style="font-size: 11pt; color: {{ primary_color }};">{{ company_name }}</strong><br>
+                    {{ company_address }}<br>
+                    TEL: {{ company_phone }}<br>
+                    EMAIL: {{ company_email }}
+                </td>
+            </tr>
+        </table>
+
+        <div style="text-align: right; margin-bottom: 20pt;">
+            <strong style="color: {{ primary_color }}; font-weight: bold;">Ref: {{ app_ref }}</strong><br>
+            <strong>Date: {{ date_letter }}</strong><br>
+            <strong style="color: #f59e0b; font-size: 8pt;">This offer is valid until: {{ expiry_date }}</strong>
+        </div>
+
+        <h1
+            style="font-size: 18pt; margin: 20pt 0 10pt 0; text-transform: uppercase; color: {{ primary_color }}; border-bottom: 1.5pt solid #e2e8f0; padding-bottom: 8pt; letter-spacing: 1px;">
+            LOAN FACILITY OFFER LETTER</h1>
+
+        <p>Dear <strong>{{ borrower_name }}</strong>,</p>
+        <p>Further to your application and our subsequent credit assessment, we are pleased to offer you a credit
+            facility of <span style="color: {{ primary_color }}; font-weight: bold;">KES {{ approved_principal }}</span>
+            ({{ amount_words }}) subject to the terms and conditions set out below:</p>
+
+        <!-- 1. BORROWER DETAILS -->
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            1. BORROWER DETAILS</h2>
+        <table class="data-table">
+            <tr>
+                <td class="label">Full Name / Entity Name</td>
+                <td class="value">{{ borrower_name }}</td>
+            </tr>
+            <tr>
+                <td class="label">Identification / Registration</td>
+                <td class="value">{{ borrower_id }}</td>
+            </tr>
+            <tr>
+                <td class="label">Primary Phone</td>
+                <td class="value">{{ borrower_phone }}</td>
+            </tr>
+            <tr>
+                <td class="label">Physical Address</td>
+                <td class="value">{{ borrower_address }}</td>
+            </tr>
+        </table>
+
+        <!-- 2. LOAN PARAMETERS -->
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            2. LOAN PARAMETERS & REPAYMENT</h2>
+        <table class="data-table">
+            <tr>
+                <td class="label">Loan Product</td>
+                <td class="value">{{ product_name }}</td>
+            </tr>
+            <tr>
+                <td class="label">Approved Principal</td>
+                <td class="value">KES {{ approved_principal }}</td>
+            </tr>
+            <tr>
+                <td class="label">Interest Rate</td>
+                <td class="value">{{ interest_rate_str }} ({{ interest_method }})</td>
+            </tr>
+            <tr>
+                <td class="label">Repayment Period</td>
+                <td class="value">{{ term_str }}</td>
+            </tr>
+            <tr>
+                <td class="label">Installment Amount</td>
+                <td class="value" style="color: {{ primary_color }}; font-weight: bold;">KES {{ installment_amount }}
+                </td>
+            </tr>
+            <tr>
+                <td class="label">Frequency</td>
+                <td class="value">{{ frequency }}</td>
+            </tr>
+        </table>
+
+        <!-- 3. DISBURSEMENT -->
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            3. DISBURSEMENT & DEDUCTIONS</h2>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="background-color: {{ primary_color }}; color: white;">Description</th>
+                    <th style="background-color: {{ primary_color }}; color: white;">Mode/Method</th>
+                    <th style="background-color: {{ primary_color }}; color: white; text-align: right;">Amount (KES)
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Gross Principal</td>
+                    <td>Credit Facility</td>
+                    <td style="text-align: right;">{{ approved_principal }}</td>
+                </tr>
+                {% for d in deductions_list %}
+                <tr>
+                    <td>{{ d.name }}</td>
+                    <td>{{ d.method }}</td>
+                    <td style="text-align: right;">({{ d.amount }})</td>
+                </tr>
+                {% endfor %}
+                {% if is_refinancing %}
+                <tr style="color: #ea580c; background: #fff7ed;">
+                    <td>
+                        Refinancing Payoff<br>
+                        <small style="font-size: 7.5pt; color: #9a3412; font-style: italic;">{{ payoff_note }}</small>
+                    </td>
+                    <td>Loan {{ refinanced_loan_number }}</td>
+                    <td style="text-align: right;">({{ payoff_amount }})</td>
+                </tr>
+                {% endif %}
+                <tr style="background: #f1f5f9; font-weight: bold;">
+                    <td colspan="2">NET DISBURSEMENT AMOUNT</td>
+                    <td style="text-align: right; color: {{ primary_color }};">KES {{ net_disbursement }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- 4. SCHEDULE -->
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            4. PROVISIONAL REPAYMENT SCHEDULE</h2>
+        <div class="clause">Please note that the dates below are provisional and will be finalized upon the actual date
+            of disbursement:</div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="background-color: {{ primary_color }}; color: white; width: 10%;">Inst. No</th>
+                    <th style="background-color: {{ primary_color }}; color: white;">Due Date</th>
+                    <th style="background-color: {{ primary_color }}; color: white; text-align: right;">Principal</th>
+                    <th style="background-color: {{ primary_color }}; color: white; text-align: right;">Interest</th>
+                    <th style="background-color: {{ primary_color }}; color: white; text-align: right;">Total Due (KES)
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in schedules_list %}
+                <tr>
+                    <td>{{ s.number }}</td>
+                    <td>{{ s.due_date }}</td>
+                    <td style="text-align: right;">{{ s.principal }}</td>
+                    <td style="text-align: right;">{{ s.interest }}</td>
+                    <td style="text-align: right; font-weight: bold;">{{ s.total }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #888;">Complete schedule will be attached to the
+                        final loan agreement.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <pdf:nextpage />
+
+        <!-- 5. SECURITY -->
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            5. SECURITY / COLLATERAL</h2>
+        <div class="clause">
+            {% if has_collateral %}
+            This facility is secured by a charge over the following asset(s):
+            <ul style="margin: 5pt 0 10pt 20pt;">
+                {% for c in collaterals_list %}
+                <li><strong>Asset Description:</strong> {{ c.desc }}</li>
+                <li><strong>Registration/Serial No:</strong> {{ c.id }}</li>
+                {% endfor %}
+            </ul>
+            The Borrower agrees to execute all necessary security documents including chattels mortgage, logbook
+            transfer forms, or debentures as required by the Lender.
+            {% else %}
+            This facility is granted based on your <strong>Personal Guarantee</strong> and current creditworthiness
+            (Unsecured). The Lender reserves the absolute right to call for additional security or collateral at any
+            time during the tenure of the facility should the Borrower's risk profile deteriorate.
+            {% endif %}
+        </div>
+
+        {% if has_guarantors %}
+        <h3 style="font-size: 9.5pt; margin: 15pt 0 6pt 0; font-weight: bold; color: {{ primary_color }};">
+            GUARANTORS</h3>
+        <div class="clause">
+            This facility is further secured by the following guarantor(s) who have agreed to guarantee repayment:
+        </div>
+        <table class="data-table" style="margin-bottom: 15pt;">
+            <thead>
+                <tr>
+                    <th style="background-color: {{ primary_color }}; color: white;">Name</th>
+                    <th style="background-color: {{ primary_color }}; color: white;">ID Number</th>
+                    <th style="background-color: {{ primary_color }}; color: white;">Phone</th>
+                    <th style="background-color: {{ primary_color }}; color: white;">Relationship</th>
+                    <th style="background-color: {{ primary_color }}; color: white; text-align: right;">Amount
+                        Guaranteed (KES)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in guarantors_list %}
+                <tr>
+                    <td>{{ g.name }}</td>
+                    <td>{{ g.id_number }}</td>
+                    <td>{{ g.phone }}</td>
+                    <td>{{ g.relationship }}</td>
+                    <td style="text-align: right; font-weight: bold;">{{ g.amount }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="clause" style="margin-bottom: 15pt;">
+            <strong>GUARANTOR ACKNOWLEDGMENT:</strong> Each guarantor acknowledges that they have read and understood
+            the terms of this facility and agree to be jointly and severally liable for the repayment of the guaranteed
+            amount in the event of default by the Borrower.
+        </div>
+
+        <!-- Guarantor Signatures -->
+        <h3 style="font-size: 9pt; margin: 15pt 0 10pt 0; font-weight: bold; color: {{ primary_color }};">
+            GUARANTOR SIGNATURES</h3>
+        {% for g in guarantors_list %}
+        <table style="width: 100%; margin-bottom: 20pt; border: 1pt solid #e2e8f0; padding: 10pt;">
+            <tr>
+                <td style="width: 70%; vertical-align: top;">
+                    <p style="margin: 0 0 5pt 0;"><strong>GUARANTOR {{ forloop.counter }}:</strong> {{ g.name }}</p>
+                    <p style="margin: 0 0 5pt 0; font-size: 8pt;">ID Number: {{ g.id_number }}</p>
+                    <p style="margin: 0 0 5pt 0; font-size: 8pt;">Phone: {{ g.phone }}</p>
+                    <p style="margin: 0 0 5pt 0; font-size: 8pt;">Amount Guaranteed: KES {{ g.amount }}</p>
+                </td>
+                <td style="width: 30%; vertical-align: top; padding-left: 10pt;">
+                    <p style="margin: 0 0 5pt 0; font-size: 8pt; font-weight: bold;">SIGNATURE:</p>
+                    <div style="border-bottom: 1.2pt solid #1e293b; height: 30pt; margin-bottom: 5pt;"></div>
+                    <p style="margin: 0; font-size: 8pt;">DATE: ______________</p>
+                </td>
+            </tr>
+        </table>
+        {% endfor %}
+        {% endif %}
+
+        <!-- DETAILED LEGAL SECTIONS 11-16 -->
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            11. FEES AND EXPENSES</h2>
+        <div class="clause">
+            The Borrower shall pay to the Lender on demand on a full indemnity basis, all expenses (including legal fees
+            of the Lender’s and the Borrower’s Advocates and out-of-pocket expenses together with any taxes if any
+            thereon), auctioneer’s costs connected with the recovery of money’s owing under the facility as well as the
+            contesting of any involvement in any legal proceedings of whatever nature by the lender for the protection
+            of or in connection with any account(s) or assets of the Borrower and also in connection with the
+            negotiation, preparation and execution of this letter and/or the security documents, the fulfillment of all
+            conditions of the propose facility and/or otherwise in respect of any monies owing under or in respect of
+            the proposed facility.
+        </div>
+
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            12. DISPUTE RESOLUTION</h2>
+        <div class="clause">
+            The Parties agree that should a dispute arise with respect to the provisions of this Agreement, they shall
+            make good faith efforts to resolve the dispute on a business basis through negotiations between the Parties’
+            principals. Such consultations shall begin immediately after any of the Parties have delivered to the others
+            written request for such consultation.
+            <br><br>
+            If within fifteen (15) days following the date in which such notice is given the dispute cannot be resolved,
+            the Parties agree to submit the matter to a single arbitrator to be appointed by the Parties jointly and
+            failing agreement by the Chairman for the time being, of the Chartered Institute of Arbitrators, Kenyan
+            Chapter. Such arbitration shall be conducted in Nairobi and resolved in accordance with the provisions of
+            Arbitration Act of 1995 as amended from time to time. The decision of the arbitrator shall be final and
+            binding upon the Parties to the fullest extent permissible by law.
+            <br><br>
+            This offer letter, and all disputes and claims arising out of or in connection with it, shall be governed by
+            the laws of Kenya and subject to the provisions of Arbitration Act of 1995 as amended from time to time.
+            <br><br>
+            The offer lapses if not accepted and returned with executed documents within <strong>14 days</strong> of the
+            date of this letter.
+        </div>
+
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            13. CREDIT REFERENCE BUREAUS</h2>
+        <div class="clause">
+            The Borrower expressly consents and allows the lender to forward personal data and full file credit
+            information to licensed credit reference bureaus.
+        </div>
+
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            14. EARLY REPAYMENTS</h2>
+        <div class="clause">
+            <ul style="margin: 5pt 0 10pt 20pt;">
+                <li>The borrower can settle his/her loan early upon payment of 15% interest monthly for the duration of
+                    the loan advanced. I.e. if he/she took the loan for six months, he/she can settle the loan early by
+                    paying the principle plus 15% compounded interest fee for the period the loan has been in existence.
+                    However, if the borrower bounces any cheque or misses an installment, he/she is not entitled to any
+                    early settlement consideration.</li>
+                <li>In case of payoff by another financier, the borrower will be required to pay the lender an interest
+                    of 30% on the outstanding balance.</li>
+            </ul>
+        </div>
+
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            15. DEFAULT</h2>
+        <div class="clause">
+            a) The following events will constitute default and cause any amount outstanding under the proposed facility
+            to become immediately due and repayable and any commitments hereunder cancelled:
+            <ul style="margin: 5pt 0 10pt 20pt;">
+                <li><strong>(i)</strong> The failure of the Borrower to observe or perform any other obligations under
+                    this letter and/or the security documents.</li>
+                <li><strong>(ii)</strong> If any circumstances arise which in the opinion of the Lender have or may have
+                    a material adverse effect on the Borrower’s ability to perform its obligations under this letter
+                    and/or the security documents.</li>
+                <li><strong>(iii)</strong> The Borrower admits in writing its inability to pay or shall become unable to
+                    pay its debts generally as they fall due, or become bankrupt or insolvent, or file any petition or
+                    action for relief under any bankruptcy, re-organization, and insolvency law.</li>
+                <li><strong>(iv)</strong> The Borrower suspends or threatens to suspend its operations or, except in the
+                    ordinary course of business, sell, lease, transfer or otherwise dispose of all or any substantial
+                    part of the Borrower’s assets (whether by a single transaction or by a series) or all or any part of
+                    its assets are seized or appropriated by or on behalf of any governmental or other authority or are
+                    compulsorily acquired.</li>
+                <li><strong>(v)</strong> Any of the Borrower’s indebtedness is not paid on its due date or becomes due
+                    prior to its stated maturity or any guarantee given by the Borrower is not honored when due or
+                    called upon. The Borrower will indemnify the Lender against any loss (including loss of profit) or
+                    expense which may be incurred as a consequence of any default in payment by the Borrower of any sum
+                    hereunder when due and/or the occurrence of any event of default. </li>
+            </ul>
+        </div>
+
+        <h2
+            style="font-size: 10.5pt; margin: 18pt 0 6pt 0; text-transform: uppercase; font-weight: bold; color: {{ primary_color }}; border-left: 3pt solid {{ primary_color }}; padding-left: 8pt;">
+            16. DECLARATION BY BORROWER</h2>
+        <div class="clause">
+            The borrower declares that: -
+            <ul style="margin: 5pt 0 10pt 20pt;">
+                <li><strong>(i)</strong> The information supplied by him/her in the loan application form is true and
+                    correct in all respects.</li>
+                <li><strong>(ii)</strong> He/she has authorized {{ company_name }} to issue the payment on his/her
+                    behalf to the holders of account/payee stated in the application form.</li>
+                <li><strong>(iii)</strong> He understands that if his/her employment is terminated before the loan is
+                    fully repaid; the loan then outstanding will immediately become due and payable.</li>
+                <li><strong>(iv)</strong> He/she is aware that having given the logbook of the motor vehicle used as
+                    security for the debt, together with the transfer of the said motor vehicle duly completed and
+                    executed in the favour of the Lender he/she acknowledges that: -
+                    <ul style="list-style-type: lower-alpha; margin: 5pt 0 5pt 20pt;">
+                        <li>Until the loan is fully repaid, the lender is entitled to make recourse to its security, in
+                            the event of any default in payment of any installment.</li>
+                        <li>The lender is entitled to have the said motor vehicle registration in its (the lender) name,
+                            before making such recourse.</li>
+                        <li>In the event of such defaults the lender is entitled to repossess and dispose the said motor
+                            vehicle in such manner as it may in its sole discretion determine to be in its interest.
+                        </li>
+                        <li>He is aware that concealment of the said motor vehicle or the cannibalization thereof, is a
+                            fraudulent act, actionable both as a criminal offence and by way of civil action.</li>
+                        <li>He/she is also aware that failure to make arrangements for the payment of post-dated
+                            Cheques, upon presentation for payment, on due date is an offence, punishable under both
+                            civil and criminal law.</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+
+        <!-- ACCEPTANCE -->
+        <div style="margin-top: 30pt; margin-bottom: 20pt;">
+            <p><strong>OFFER ACCEPTANCE</strong></p>
+            <p>I / We, <strong>{{ borrower_name }}</strong>, having read and understood the terms and conditions set out
+                in this offer letter, hereby accept the facility on the said terms.</p>
+        </div>
+
+        <table class="sig-section">
+            <tr>
+                <td class="sig-box">
+                    {% if is_company %}
+                    <p style="font-weight: bold; font-size: 8pt; margin-bottom: 5pt;">SIGNED FOR AND ON BEHALF OF THE
+                        BORROWER:</p>
+                    <p style="font-size: 8pt; font-weight: bold; margin-bottom: 10pt;">{{ borrower_name }}</p>
+
+                    <p><strong>NAME:</strong> {{ contact_name }}</p>
+                    <p><strong>DESIGNATION:</strong> {{ contact_designation }}</p>
+                    <p style="margin-top: 15pt;">SIGNATURE: ______________________________</p>
+                    <p style="margin-top: 5pt;">DATE: ______________________________</p>
+
+                    <div style="margin-top: 20pt;">
+                        <p style="font-weight: bold; font-size: 8pt; margin-bottom: 5pt;">IN THE PRESENCE OF / SECOND
+                            SIGNATORY:</p>
+                        <p><strong>NAME:</strong> ______________________________</p>
+                        <p><strong>DESIGNATION:</strong> ______________________________</p>
+                        <p style="margin-top: 15pt;">SIGNATURE: ______________________________</p>
+                        <p style="margin-top: 5pt;">DATE: ______________________________</p>
+                    </div>
+                    {% else %}
+                    <p style="font-weight: bold; font-size: 8pt;">SIGNED BY THE BORROWER:</p>
+                    <div class="sig-line"></div>
+                    <p><strong>NAME: {{ borrower_name }}</strong></p>
+                    <p>ID/REG NO: {{ borrower_id }}</p>
+                    <p>DATE: ____________________</p>
+                    {% endif %}
+                </td>
+                <td style="width: 10%;"></td>
+                <td class="sig-box">
+                    <p style="font-weight: bold; font-size: 8pt;">FOR AND ON BEHALF OF LENDER:</p>
+                    <div class="sig-line"></div>
+                    <p><strong>{{ loan_officer_name }}</strong></p>
+                    <p style="font-size: 8pt;">{{ company_name }}</p>
+                    <p>DATE: {{ date_letter }}</p>
+                </td>
+            </tr>
+        </table>
+    </div>
+</body>
+
+</html>

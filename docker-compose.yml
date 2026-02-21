@@ -1,0 +1,120 @@
+services:
+  db:
+    image: postgres:15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${DB_NAME:-lms_prod}
+      - POSTGRES_USER=${DB_USER:-lms_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-secure_db_password}
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U lms_user -d lms_prod" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: always
+
+
+  backend:
+    build: ./backend
+    command: gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    volumes:
+      - ./backend:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    environment:
+      - DEBUG=0
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DB_NAME=${DB_NAME:-lms_prod}
+      - DB_USER=${DB_USER:-lms_user}
+      - DB_PASSWORD=${DB_PASSWORD:-secure_db_password}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DATABASE_URL=postgres://${DB_USER:-lms_user}:${DB_PASSWORD:-secure_db_password}@db:5432/${DB_NAME:-lms_prod}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - RUN_MIGRATIONS=1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+
+
+  celery_worker:
+    build: ./backend
+    command: celery -A core worker -l info
+    volumes:
+      - media_volume:/app/media
+    environment:
+      - DEBUG=0
+      - SECRET_KEY=${SECRET_KEY}
+      - DB_NAME=${DB_NAME:-lms_prod}
+      - DB_USER=${DB_USER:-lms_user}
+      - DB_PASSWORD=${DB_PASSWORD:-secure_db_password}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DATABASE_URL=postgres://${DB_USER:-lms_user}:${DB_PASSWORD:-secure_db_password}@db:5432/${DB_NAME:-lms_prod}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - RUN_MIGRATIONS=0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+
+
+  celery_beat:
+    build: ./backend
+    command: celery -A core beat -l info
+    environment:
+      - DEBUG=0
+      - SECRET_KEY=${SECRET_KEY}
+      - DB_NAME=${DB_NAME:-lms_prod}
+      - DB_USER=${DB_USER:-lms_user}
+      - DB_PASSWORD=${DB_PASSWORD:-secure_db_password}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DATABASE_URL=postgres://${DB_USER:-lms_user}:${DB_PASSWORD:-secure_db_password}@db:5432/${DB_NAME:-lms_prod}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - RUN_MIGRATIONS=0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+      - NEXT_PUBLIC_PRIMARY_COLOR=${NEXT_PUBLIC_PRIMARY_COLOR}
+    restart: always
+
+
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:
+
