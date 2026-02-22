@@ -14,7 +14,6 @@ services:
       retries: 5
     restart: always
 
-
   redis:
     image: redis:7-alpine
     healthcheck:
@@ -23,7 +22,6 @@ services:
       timeout: 3s
       retries: 5
     restart: always
-
 
   backend:
     build: ./backend
@@ -52,7 +50,6 @@ services:
         condition: service_healthy
     restart: always
 
-
   celery_worker:
     build: ./backend
     command: celery -A core worker -l info
@@ -76,7 +73,6 @@ services:
       redis:
         condition: service_healthy
     restart: always
-
 
   celery_beat:
     build: ./backend
@@ -111,10 +107,9 @@ services:
       - NEXT_PUBLIC_PRIMARY_COLOR=${NEXT_PUBLIC_PRIMARY_COLOR}
     restart: always
 
-
-
 volumes:
   postgres_data:
   static_volume:
   media_volume:
+
 

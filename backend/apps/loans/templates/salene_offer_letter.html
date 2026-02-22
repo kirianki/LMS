@@ -27,11 +27,13 @@
 
         body {
             font-family: Helvetica, Arial, sans-serif;
-            font-size: 8.5pt;
-            line-height: 1.3;
+            font-size: 10pt;
+            line-height: 1.45;
             color: #1e293b;
             margin: 0;
             padding: 0;
+            widows: 3;
+            orphans: 3;
         }
 
         /* WATERMARK - uses very light color for xhtml2pdf compatibility */
@@ -63,7 +65,7 @@
             width: 60%;
             text-align: right;
             vertical-align: middle;
-            font-size: 7.5pt;
+            font-size: 9pt;
             color: #475569;
         }
 
@@ -93,10 +95,11 @@
         .section-header {
             text-transform: uppercase;
             font-weight: bold;
-            font-size: 9pt;
-            margin: 10pt 0 5pt 0;
+            font-size: 10.5pt;
+            margin: 12pt 0 5pt 0;
             padding-bottom: 2pt;
             border-bottom: 1pt solid #f1f5f9;
+            page-break-after: avoid;
         }
 
         .clause-text {
@@ -119,7 +122,7 @@
         .data-table th {
             font-weight: bold;
             text-align: left;
-            font-size: 7.5pt;
+            font-size: 9pt;
             text-transform: uppercase;
         }
 
@@ -149,7 +152,7 @@
             font-weight: bold;
             background-color: #f8fafc;
             color: #64748b;
-            font-size: 8pt;
+            font-size: 9pt;
         }
 
         .signature-section {
@@ -171,7 +174,7 @@
         }
 
         .footer-text {
-            font-size: 7pt;
+            font-size: 8pt;
             color: #94a3b8;
             font-style: italic;
             margin-top: 15pt;
@@ -187,7 +190,7 @@
             border-radius: 4pt;
             margin: 5pt 0;
             border-left: 3pt solid #cbd5e1;
-            font-size: 8pt;
+            font-size: 9.5pt;
         }
 
         /* Legal Columns */
@@ -201,10 +204,12 @@
         }
 
         .Legal-text {
-            font-size: 7pt;
+            font-size: 9pt;
             text-align: justify;
-            line-height: 1.25;
+            line-height: 1.45;
             color: #334155;
+            widows: 3;
+            orphans: 3;
         }
 
         .Legal-text ul {
@@ -216,9 +221,18 @@
             margin-bottom: 2pt;
         }
 
-        /* Prevent split tables */
+        /* Prevent split tables and section blocks */
         table {
             page-break-inside: avoid;
+        }
+
+        .section-block {
+            page-break-inside: avoid;
+        }
+
+        p, li {
+            widows: 3;
+            orphans: 3;
         }
     </style>
 </head>
