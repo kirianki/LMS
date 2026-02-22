@@ -104,15 +104,12 @@ class Profile(models.Model):
         return f"Profile for {self.user.email} ({self.employee_id})"
 
 @receiver(post_save, sender=User)
-def create_user_profile(sender, instance, created, **kwargs):
+def ensure_user_profile(sender, instance, created, **kwargs):
+    """Ensure every User has a Profile. Only create it if missing; never force-save."""
     if created:
-        Profile.objects.create(user=instance)
-
-@receiver(post_save, sender=User)
-def save_user_profile(sender, instance, **kwargs):
-    if not hasattr(instance, 'profile'):
-        Profile.objects.create(user=instance)
-    instance.profile.save()
+        Profile.objects.get_or_create(user=instance)
+    elif not hasattr(instance, 'profile'):
+        Profile.objects.get_or_create(user=instance)
 
 
 class StaffDocument(models.Model):
