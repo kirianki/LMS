@@ -34,7 +34,8 @@ class BorrowerSerializer(serializers.ModelSerializer):
         model = Borrower
         fields = '__all__'
         read_only_fields = [
-            'is_verified', 'verified_by', 'verified_at', 
+            'is_verified', 'verification_status', 'verification_notes',
+            'verified_by', 'verified_at', 'created_by',
             'crb_score', 'internal_score', 'hybrid_score', 'last_crb_check',
             'created_at', 'updated_at', 'borrower_number'
         ]
