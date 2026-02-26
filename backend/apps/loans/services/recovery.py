@@ -53,7 +53,10 @@ def approve_loan_write_off(loan, reason, user):
         case.resolved_at = timezone.now()
         case.save(update_fields=['status', 'resolved_at'])
         
-    # Note: In a real system, this would also trigger an accounting entry 
-    # to move the outstanding balance from Loan Portfolio to Bad Debt Expense.
+    # 4. Trigger accounting entry to recognize bad debt
+    from apps.accounting.services import post_loan_write_off
+    # Write off the total outstanding balance
+    write_off_amount = loan.outstanding_principal + loan.outstanding_interest + loan.outstanding_penalties
+    post_loan_write_off(loan, amount=write_off_amount)
         
     return True

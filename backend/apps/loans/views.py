@@ -347,7 +347,7 @@ class LoanApplicationViewSet(TenantScopedViewSet):
 
     @action(detail=True, methods=['post'])
     def send_offer_letter(self, request, pk=None):
-        """Generate and send offer letter."""
+        """Generate and send offer letter. Optionally email to borrower."""
         application = self.get_object()
         
         # Allow regeneration if status is APPROVED or OFFER_SENT
@@ -372,16 +372,66 @@ class LoanApplicationViewSet(TenantScopedViewSet):
         if application.offer_letter_file:
             application.offer_letter_file.delete(save=False)
             
+        pdf_content = pdf_buffer.getvalue()
+        offer_filename = f"offer_{application.application_number}.pdf"
+        
         application.offer_letter_file.save(
-            f"offer_{application.application_number}.pdf",
-            ContentFile(pdf_buffer.getvalue())
+            offer_filename,
+            ContentFile(pdf_content)
         )
         
         application.status = LoanApplication.Status.OFFER_SENT
-        application.offer_expires_at = timezone.now() + timezone.timedelta(days=7)  # Offer valid for 7 days
+        application.offer_expires_at = timezone.now() + timezone.timedelta(days=7)
         application.save()
         
-        return Response({'status': 'offer_sent'})
+        # Optionally email the offer letter to the borrower
+        email_sent = False
+        send_to_borrower = request.data.get('send_to_borrower', False)
+        if send_to_borrower:
+            try:
+                from apps.notifications.services import EmailService
+                
+                borrower = application.borrower
+                organization = application.organization
+                
+                # Determine recipient email
+                recipient_email = None
+                recipient_name = ""
+                
+                if borrower.borrower_type in ['company', 'institution']:
+                    primary_contact = borrower.contacts.filter(is_primary=True).first()
+                    if primary_contact and primary_contact.email:
+                        recipient_email = primary_contact.email
+                        recipient_name = f"{primary_contact.first_name} {primary_contact.last_name}"
+                
+                if not recipient_email and borrower.email:
+                    recipient_email = borrower.email
+                    if borrower.borrower_type in ['company', 'institution']:
+                        recipient_name = borrower.business_name or ''
+                    else:
+                        recipient_name = f"{borrower.first_name} {borrower.last_name}"
+                
+                if recipient_email and organization:
+                    company_name = organization.company_name or 'Lender'
+                    email_service = EmailService(organization)
+                    result = email_service.send_email(
+                        recipient_email,
+                        f"Offer Letter - {application.application_number}",
+                        f"Dear {recipient_name},\n\n"
+                        f"Please find attached the offer letter for your loan application {application.application_number}.\n\n"
+                        f"This offer is valid for 7 days.\n\n"
+                        f"Best regards,\n{company_name}",
+                        related_borrower=borrower,
+                        attachments=[(offer_filename, pdf_content, 'application/pdf')]
+                    )
+                    email_sent = result.get('success', False)
+            except Exception as email_err:
+                logger.error(f"Failed to email offer letter: {email_err}", exc_info=True)
+        
+        return Response({
+            'status': 'offer_sent',
+            'email_sent': email_sent
+        })
 
     @action(detail=True, methods=['get'])
     def download_offer_letter(self, request, pk=None):
@@ -949,12 +999,15 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         
         if updated_count > 0:
             # Log activity
+            from django.contrib.contenttypes.models import ContentType
+            loan_ct = ContentType.objects.get_for_model(Loan)
             ActivityLog.objects.create(
                 user=request.user,
-                action='update_schedule',
-                model_name='Loan',
+                action=ActivityLog.Action.UPDATE,
+                module='Loans',
+                content_type=loan_ct,
                 object_id=str(loan.id),
-                details=f"Updated repayment schedule dates for loan {loan.loan_number}. {updated_count} installments updated."
+                description=f"Updated repayment schedule dates for loan {loan.loan_number}. {updated_count} installments updated."
             )
         
         return Response({
@@ -1155,6 +1208,7 @@ def dashboard_summary(request):
     
     today = timezone.now().date()
     start_of_month = today.replace(day=1)
+    start_of_month_dt = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     # 1. Active Portfolio (Active & Defaulted)
     active_statuses = [Loan.Status.ACTIVE, Loan.Status.DEFAULTED]
@@ -1163,6 +1217,7 @@ def dashboard_summary(request):
     portfolio_value = active_portfolio_qs.aggregate(total=Sum('outstanding_balance'))['total'] or 0
     portfolio_principal = active_portfolio_qs.aggregate(total=Sum('outstanding_principal'))['total'] or 0
     portfolio_interest = active_portfolio_qs.aggregate(total=Sum('outstanding_interest'))['total'] or 0
+    portfolio_penalties = active_portfolio_qs.aggregate(total=Sum('outstanding_penalties'))['total'] or 0
     active_loans_count = active_portfolio_qs.count()
     
     # 2. Avg Loan Size (Principal)
@@ -1172,6 +1227,9 @@ def dashboard_summary(request):
     par_metrics = calculate_par_metrics()
     par_percentage = par_metrics.get('par30_percent', 0)
     par_amount = par_metrics.get('par30_amount', 0)
+    
+    # Arrears: Just use the PAR30 amount as the default Portfolio in Arrears flag
+    portfolio_arrears = par_amount
     
     # 4. Disbursements
     disbursement_qs = scope_queryset(request.user, Loan.objects.exclude(disbursement_date__isnull=True))
@@ -1201,11 +1259,12 @@ def dashboard_summary(request):
     # 6. Borrower Metrics
     borrower_qs = scope_queryset(request.user, Borrower.objects.all())
     total_borrowers = borrower_qs.count()
-    new_borrowers_this_month = borrower_qs.filter(created_at__gte=start_of_month).count()
+    new_borrowers_this_month = borrower_qs.filter(created_at__gte=start_of_month_dt).count()
     verified_borrowers = borrower_qs.filter(verification_status=Borrower.VerificationStatus.VERIFIED).count()
     
     # Active Borrowers: Borrowers with at least one active loan
     active_borrowers = active_portfolio_qs.values('borrower').distinct().count()
+    inactive_borrowers = total_borrowers - active_borrowers
 
     # 7. Portfolio Growth & Trends (Last 6 Months)
     from dateutil.relativedelta import relativedelta
@@ -1255,6 +1314,8 @@ def dashboard_summary(request):
         'portfolio_value': portfolio_value,
         'portfolio_principal': portfolio_principal,
         'portfolio_interest': portfolio_interest,
+        'portfolio_penalties': portfolio_penalties,
+        'portfolio_arrears': portfolio_arrears,
         'active_loans_count': active_loans_count,
         'par_percentage': par_percentage,
         'par_amount': par_amount,
@@ -1271,6 +1332,7 @@ def dashboard_summary(request):
         'new_borrowers_this_month': new_borrowers_this_month,
         'verified_borrowers': verified_borrowers,
         'active_borrowers': active_borrowers,
+        'inactive_borrowers': inactive_borrowers,
         
         'trends': trends,
         'branch_performance': branch_performance,
@@ -1354,13 +1416,15 @@ class LoanGuarantorViewSet(viewsets.ModelViewSet):
                 notes=request.data.get('notes', '')
             )
             
-            # Log activity
+            from django.contrib.contenttypes.models import ContentType
+            loan_ct = ContentType.objects.get_for_model(Loan)
             ActivityLog.objects.create(
                 user=request.user,
-                action='record_payment',
-                model_name='Loan',
+                action=ActivityLog.Action.REPAY,
+                module='Loans',
+                content_type=loan_ct,
                 object_id=str(loan.id),
-                details=f"Recorded payment of KES {amount} for loan {loan.loan_number}"
+                description=f"Recorded payment of KES {amount} for loan {loan.loan_number}"
             )
             
             # Refresh loan from database
@@ -1425,13 +1489,15 @@ class LoanGuarantorViewSet(viewsets.ModelViewSet):
             )
             
             if result.get('success'):
-                # Log activity
+                from django.contrib.contenttypes.models import ContentType
+                loan_ct = ContentType.objects.get_for_model(Loan)
                 ActivityLog.objects.create(
                     user=request.user,
-                    action='initiate_mpesa_stk',
-                    model_name='Loan',
+                    action=ActivityLog.Action.UPDATE,
+                    module='Loans',
+                    content_type=loan_ct,
                     object_id=str(loan.id),
-                    details=f"Initiated M-Pesa STK Push for KES {amount} to {phone}"
+                    description=f"Initiated M-Pesa STK Push for KES {amount} to {phone}"
                 )
                 
                 return Response({

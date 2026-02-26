@@ -1,25 +1,21 @@
 """
 Cross-app signals to automate treasury transactions.
 Links Loans, Repayments, Investments, and Expenses to Treasury.
+
+All money events are routed through the integrity service to ensure
+both Treasury and Accounting (GL) are updated atomically.
 """
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.db import transaction
 import logging
 
-import logging
-from apps.loans.models import Loan, LoanRepayment, LoanFee
+from apps.loans.models import Loan, LoanRepayment
 from apps.investors.models import Investment, InvestorPayout
-from apps.expenses.models import Expense, Payroll
 from apps.treasury.models import Transaction, CashAccount
 
 logger = logging.getLogger(__name__)
 
-def get_default_account(account_type):
-    """Helper to get an existing default account for the tenant."""
-    return CashAccount.objects.filter(account_type=account_type).first()
-
-from .services.integrity import record_money_event
+from .services.integrity import record_money_event, sync_treasury_coa_balance
 
 @receiver(post_save, sender=Loan)
 def log_loan_disbursement(sender, instance, created, **kwargs):
@@ -35,38 +31,30 @@ def log_loan_repayment(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=Investment)
 def log_investment_received(sender, instance, created, **kwargs):
-    """Log new investment as a Credit in Treasury."""
+    """Log new investment via integrity service (Treasury + GL)."""
     if created:
         try:
-            account = get_default_account(CashAccount.AccountType.BANK)
-            if account and not Transaction.objects.filter(reference=instance.investment_number).exists():
-                Transaction.objects.create(
-                    account=account,
-                    transaction_type=Transaction.TransactionType.CREDIT,
-                    category=Transaction.Category.INVESTMENT_RECEIVED,
-                    amount=instance.principal_amount,
-                    description=f"Investment received from {instance.investor.name}",
-                    reference=instance.investment_number,
-                    related_investment=instance
-                )
+            record_money_event('investment_received', instance)
         except Exception as e:
-            logger.error(f"Investment log error: {e}")
+            logger.error(f"Investment sync error: {e}", exc_info=True)
 
 @receiver(post_save, sender=InvestorPayout)
 def log_investor_payout(sender, instance, created, **kwargs):
-    """Log investor payout as a Debit in Treasury."""
+    """Log investor payout via integrity service (Treasury + GL)."""
     if created:
         try:
-            account = get_default_account(CashAccount.AccountType.BANK)
-            if account and not Transaction.objects.filter(reference=instance.reference).exists():
-                Transaction.objects.create(
-                    account=account,
-                    transaction_type=Transaction.TransactionType.DEBIT,
-                    category=Transaction.Category.INVESTOR_PAYOUT,
-                    amount=instance.amount,
-                    description=f"{instance.get_payout_type_display()} payout for investment {instance.investment.investment_number}",
-                    reference=instance.reference,
-                    related_investment=instance.investment
-                )
+            record_money_event('investor_payout', instance)
         except Exception as e:
-            logger.error(f"Payout log error: {e}")
+            logger.error(f"Payout sync error: {e}", exc_info=True)
+
+@receiver(post_save, sender=Transaction)
+def sync_coa_after_transaction(sender, instance, created, **kwargs):
+    """
+    After every Treasury transaction, sync the linked COA account balance.
+    This is the safety net that keeps Treasury and COA in lockstep.
+    """
+    if created and instance.account:
+        try:
+            sync_treasury_coa_balance(instance.account)
+        except Exception as e:
+            logger.error(f"COA sync error after transaction {instance.id}: {e}", exc_info=True)

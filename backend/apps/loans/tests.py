@@ -16,12 +16,15 @@ from .models import LoanProduct, LoanApplication, Loan, RepaymentSchedule
 class LoanProductTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        from apps.accounts.models import Organization
+        self.org = Organization.objects.create(company_name="Test Org")
         
         self.user = User.objects.create_superuser(
             email='loans-test@system.com',
             password='password123',
             first_name='Test',
-            last_name='Officer'
+            last_name='Officer',
+            organization=self.org
         )
         self.client.force_authenticate(user=self.user)
         self._setup_coa()
@@ -39,7 +42,7 @@ class LoanProductTests(TestCase):
         for code, name, acc_type in coa_data:
             ChartOfAccount.objects.get_or_create(
                 code=code,
-                defaults={'name': name, 'account_type': acc_type}
+                defaults={'name': name, 'account_type': acc_type, 'organization': self.org}
             )
     
     def test_create_loan_product(self):
@@ -68,12 +71,15 @@ class LoanProductTests(TestCase):
 class LoanApplicationLifecycleTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        from apps.accounts.models import Organization
+        self.org = Organization.objects.create(company_name="Test Org")
         
         self.user = User.objects.create_superuser(
             email='loan-officer@system.com',
             password='password123',
             first_name='Loan',
-            last_name='Officer'
+            last_name='Officer',
+            organization=self.org
         )
         self.client.force_authenticate(user=self.user)
         self._setup_coa()
@@ -90,17 +96,18 @@ class LoanApplicationLifecycleTests(TestCase):
             ('4300', 'Penalty', 'income'),
         ]
         for code, name, acc_type in coa_data:
-            ChartOfAccount.objects.get_or_create(code=code, defaults={'name': name, 'account_type': acc_type})
+            ChartOfAccount.objects.get_or_create(code=code, defaults={'name': name, 'account_type': acc_type, 'organization': self.org})
         
         # Ensure a cash account exists for disbursement/repayment recording
         bank_coa = ChartOfAccount.objects.filter(code='1110').first()
         CashAccount.objects.get_or_create(
             account_type=CashAccount.AccountType.BANK,
-            defaults={'name': 'Test Bank', 'coa_account': bank_coa}
+            defaults={'name': 'Test Bank', 'coa_account': bank_coa, 'organization': self.org}
         )
         
         # Create customer
         self.customer = Borrower.objects.create(
+            organization=self.org,
             first_name='John',
             last_name='Borrower',
             id_number='12345678',
@@ -112,6 +119,7 @@ class LoanApplicationLifecycleTests(TestCase):
         
         # Create product
         self.product = LoanProduct.objects.create(
+            organization=self.org,
             name='Quick Loan',
             code='QL001',
             min_amount=Decimal('5000.00'),
@@ -220,6 +228,7 @@ class LoanApplicationLifecycleTests(TestCase):
         """Test rejecting a loan application."""
         # Create and submit application
         application = LoanApplication.objects.create(
+            organization=self.org,
             borrower=self.customer,
             product=self.product,
             requested_amount=Decimal('50000.00'),
@@ -242,12 +251,15 @@ class LoanApplicationLifecycleTests(TestCase):
 class LoanRepaymentTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        from apps.accounts.models import Organization
+        self.org = Organization.objects.create(company_name="Test Org")
         
         self.user = User.objects.create_superuser(
             email='cashier@system.com',
             password='password123',
             first_name='Test',
-            last_name='Cashier'
+            last_name='Cashier',
+            organization=self.org
         )
         self.client.force_authenticate(user=self.user)
         self._setup_coa()
@@ -264,16 +276,17 @@ class LoanRepaymentTests(TestCase):
             ('4300', 'Penalty', 'income'),
         ]
         for code, name, acc_type in coa_data:
-            ChartOfAccount.objects.get_or_create(code=code, defaults={'name': name, 'account_type': acc_type})
+            ChartOfAccount.objects.get_or_create(code=code, defaults={'name': name, 'account_type': acc_type, 'organization': self.org})
         
         bank_coa = ChartOfAccount.objects.filter(code='1110').first()
         CashAccount.objects.get_or_create(
             account_type=CashAccount.AccountType.BANK,
-            defaults={'name': 'Test Bank', 'coa_account': bank_coa}
+            defaults={'name': 'Test Bank', 'coa_account': bank_coa, 'organization': self.org}
         )
         
         # Setup loan
         self.customer = Borrower.objects.create(
+            organization=self.org,
             first_name='Jane',
             last_name='Doe',
             id_number='87654321',
@@ -284,6 +297,7 @@ class LoanRepaymentTests(TestCase):
         )
         
         self.product = LoanProduct.objects.create(
+            organization=self.org,
             name='Emergency Loan',
             code='EL001',
             min_amount=Decimal('1000.00'),
@@ -296,6 +310,7 @@ class LoanRepaymentTests(TestCase):
         )
         
         application = LoanApplication.objects.create(
+            organization=self.org,
             borrower=self.customer,
             product=self.product,
             requested_amount=Decimal('10000.00'),
@@ -309,6 +324,7 @@ class LoanRepaymentTests(TestCase):
         )
         
         self.loan = Loan.objects.create(
+            organization=self.org,
             application=application,
             borrower=self.customer,
             product=self.product,

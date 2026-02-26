@@ -181,6 +181,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.treasury.tasks.create_daily_financial_snapshots',
         'schedule': 60 * 60 * 24,  # Daily
     },
+    'reconcile-treasury-coa': {
+        'task': 'apps.treasury.tasks.reconcile_treasury_coa',
+        'schedule': 60 * 60,  # Hourly
+    },
 }
 
 # --- Default Primary Key Field ---

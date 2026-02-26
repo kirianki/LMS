@@ -13,19 +13,25 @@ User = get_user_model()
 
 class TreasuryTestCase(TestCase):
     def setUp(self):
-        seed_standard_coa()
-        self.user = User.objects.create_user(email='treasuryuser@system.com', password='password')
+        from apps.accounts.models import Organization
+        self.org = Organization.objects.create(company_name="Test Org")
+        seed_standard_coa(organization=self.org)
+        
+        self.user = User.objects.create_user(email='treasuryuser@system.com', password='password', organization=self.org)
         self.borrower = Borrower.objects.create(
             first_name="Test", last_name="Customer", email="test@example.com", 
-            phone_number="0712345678", id_number="ID12345", date_of_birth="1990-01-01"
+            phone_number="0712345678", id_number="ID12345", date_of_birth="1990-01-01",
+            organization=self.org
         )
         self.product = LoanProduct.objects.create(
             name="Test Product", code="TP01",
             min_amount=1000, max_amount=100000,
-            interest_rate=10, min_term=1, max_term=12
+            suggested_interest_rate=10, min_term=1, max_term=12,
+            organization=self.org
         )
         self.account = CashAccount.objects.create(
-            name="Test Bank", account_type=CashAccount.AccountType.BANK, current_balance=Decimal('50000.00')
+            name="Test Bank", account_type=CashAccount.AccountType.BANK, current_balance=Decimal('50000.00'),
+            organization=self.org
         )
 
     def test_transaction_updates_balance(self):
@@ -70,6 +76,7 @@ class TreasuryTestCase(TestCase):
         """Test that record_money_event updates both Treasury and GL."""
         # Create a LoanApplication first
         app = LoanApplication.objects.create(
+            organization=self.org,
             borrower=self.borrower,
             product=self.product,
             requested_amount=Decimal('10000.00'),
@@ -78,6 +85,7 @@ class TreasuryTestCase(TestCase):
         )
         # Create a Loan
         loan = Loan.objects.create(
+            organization=self.org,
             application=app,
             borrower=self.borrower,
             product=self.product,
@@ -101,12 +109,12 @@ class TreasuryTestCase(TestCase):
         self.assertTrue(Transaction.objects.filter(related_loan=loan, category=Transaction.Category.LOAN_DISBURSEMENT).exists())
         
         # 2. Check GL (Accounting)
-        # M-Pesa account code 1130 should have decreased (Credit)
-        bank_coa = ChartOfAccount.objects.get(code='1130')
+        # Bank account code 1110 should have decreased (Credit)
+        bank_coa = ChartOfAccount.objects.get(code='1110', organization=self.org)
         self.assertEqual(bank_coa.balance, Decimal('-10000.00')) 
         
         # Principal account 1210 should have increased (Debit)
-        principal_coa = ChartOfAccount.objects.get(code='1210')
+        principal_coa = ChartOfAccount.objects.get(code='1210', organization=self.org)
         self.assertEqual(principal_coa.balance, Decimal('10000.00'))
         
         # Journal Entry should exist

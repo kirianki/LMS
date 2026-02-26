@@ -24,6 +24,7 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Permission.objects.all()
     serializer_class = PermissionSerializer
     permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    pagination_class = None
 
 
 class StaffDocumentViewSet(TenantScopedViewSet):
@@ -58,6 +59,7 @@ class UserViewSet(TenantScopedViewSet):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
     parser_classes = [parsers.JSONParser, parsers.MultiPartParser, parsers.FormParser]
+    ordering = ['id']
 
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def register(self, request):
@@ -141,6 +143,7 @@ class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
+    ordering = ['id']
 
 
 class StaffContractViewSet(TenantScopedViewSet):

@@ -217,3 +217,58 @@ def post_savings_interest(transaction):
         credits=[('2110', transaction.amount)],
         organization=transaction.account.organization
     )
+
+
+def post_investment_received(investment, cash_account_code='1110'):
+    """
+    Investment Received:
+    Debit: Cash/Bank Account (Asset)
+    Credit: Investor Capital / Long-term Liabilities (Liability - 2200)
+    """
+    create_double_entry(
+        date=investment.investment_date,
+        description=f"Investment received from {investment.investor.name}: {investment.investment_number}",
+        reference=investment.investment_number,
+        debits=[(cash_account_code, investment.principal_amount)],
+        credits=[('2200', investment.principal_amount)],
+        organization=investment.investor.organization
+    )
+
+
+def post_investor_payout(payout, cash_account_code='1110'):
+    """
+    Investor Payout:
+    - Principal return: Debit Investor Capital (2200), Credit Cash
+    - Interest/Bonus: Debit Interest Expense (5210), Credit Cash
+    """
+    if payout.payout_type == 'principal':
+        debit_code = '2200'  # Reduce liability
+        desc = f"Principal return to {payout.investment.investor.name}"
+    else:
+        debit_code = '5210'  # Interest/bonus expense
+        desc = f"{payout.get_payout_type_display()} to {payout.investment.investor.name}"
+
+    create_double_entry(
+        date=payout.payout_date,
+        description=desc,
+        reference=payout.reference or f"PAYOUT-{payout.id}",
+        debits=[(debit_code, payout.amount)],
+        credits=[(cash_account_code, payout.amount)],
+        organization=payout.investment.investor.organization
+    )
+
+
+def post_loan_write_off(loan, amount):
+    """
+    Loan Write-Off:
+    Debit: Loan Loss Expense (Expense - 5300)
+    Credit: Loan Portfolio (Asset - 1210)
+    """
+    create_double_entry(
+        date=timezone.now().date(),
+        description=f"Loan Write-off: {loan.loan_number} from {loan.borrower}",
+        reference=f"WO-{loan.loan_number}",
+        debits=[('5300', amount)],
+        credits=[('1210', amount)],
+        organization=loan.organization
+    )

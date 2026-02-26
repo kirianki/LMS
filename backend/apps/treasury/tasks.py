@@ -57,3 +57,74 @@ def create_daily_financial_snapshots():
         
     except Exception as e:
         logger.error(f"Error creating financial snapshot: {str(e)}")
+
+
+@shared_task
+def reconcile_treasury_coa():
+    """
+    Periodic reconciliation: ensures every Treasury CashAccount balance
+    matches its linked COA account balance (derived from posted ledger entries).
+    
+    This is a safety net — the real-time sync happens via the post_save signal
+    on Transaction. This task catches any drift that slipped through.
+    """
+    from decimal import Decimal
+    from apps.accounting.models import LedgerEntry
+    
+    accounts = CashAccount.objects.filter(
+        coa_account__isnull=False, is_active=True
+    ).select_related('coa_account')
+    
+    discrepancies = []
+    
+    for ca in accounts:
+        coa = ca.coa_account
+        
+        # Recalculate COA balance from ledger entries (source of truth)
+        entries = LedgerEntry.objects.filter(account=coa, is_posted=True)
+        debits = entries.filter(entry_type='debit').aggregate(
+            total=Sum('amount'))['total'] or Decimal('0.00')
+        credits = entries.filter(entry_type='credit').aggregate(
+            total=Sum('amount'))['total'] or Decimal('0.00')
+        
+        if coa.account_type in ['asset', 'expense']:
+            correct_balance = debits - credits
+        else:
+            correct_balance = credits - debits
+        
+        # Check for COA balance drift (vs ledger entries)
+        if coa.balance != correct_balance:
+            logger.warning(
+                f"COA DRIFT: {coa.code} {coa.name} | "
+                f"stored={coa.balance}, correct={correct_balance} "
+                f"(diff={coa.balance - correct_balance})"
+            )
+            coa.balance = correct_balance
+            coa.save(update_fields=['balance'])
+            discrepancies.append({
+                'account': coa.code,
+                'type': 'coa_ledger_drift',
+                'old': str(coa.balance),
+                'corrected': str(correct_balance),
+            })
+        
+        # Check Treasury vs corrected COA balance
+        if ca.current_balance != correct_balance:
+            logger.warning(
+                f"TREASURY-COA MISMATCH: {ca.name} treasury={ca.current_balance}, "
+                f"COA {coa.code}={correct_balance} "
+                f"(diff={ca.current_balance - correct_balance})"
+            )
+            discrepancies.append({
+                'account': ca.name,
+                'type': 'treasury_coa_mismatch',
+                'treasury': str(ca.current_balance),
+                'coa': str(correct_balance),
+            })
+    
+    if discrepancies:
+        logger.warning(f"Reconciliation found {len(discrepancies)} discrepancies: {discrepancies}")
+    else:
+        logger.info("Reconciliation complete: all balances consistent.")
+    
+    return {'discrepancies': len(discrepancies), 'checked': accounts.count()}

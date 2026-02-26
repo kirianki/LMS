@@ -13,6 +13,7 @@ def send_upcoming_payment_reminders():
     from apps.accounts.models import Organization
     from apps.loans.models import RepaymentSchedule
     from apps.loans.services.sms import send_loan_reminder_sms
+    from apps.loans.services.email import send_loan_reminder_email
     
     today = date.today()
     total_processed = 0
@@ -32,7 +33,12 @@ def send_upcoming_payment_reminders():
             loan = schedule.loan
             borrower = loan.borrower
             
+            # Send SMS
             result = send_loan_reminder_sms(org, borrower, loan, schedule)
+            
+            # Send Email if borrower has email
+            if borrower.email:
+                send_loan_reminder_email(org, borrower, loan, schedule)
             if result.get('success'):
                 total_processed += 1
                 logger.info(f"Sent reminder for {loan.loan_number} in {org.company_name} to {borrower.phone_number}")
@@ -49,6 +55,7 @@ def send_overdue_payment_reminders():
     from apps.accounts.models import Organization
     from apps.loans.models import RepaymentSchedule
     from apps.loans.services.sms import send_overdue_reminder_sms
+    from apps.loans.services.email import send_overdue_reminder_email
     
     today = date.today()
     total_processed = 0
@@ -74,7 +81,12 @@ def send_overdue_payment_reminders():
             
             # Send reminder every 3 days for overdue
             if days_overdue % 3 == 0:
+                # Send SMS
                 result = send_overdue_reminder_sms(org, borrower, loan, schedule, days_overdue)
+                
+                # Send Email if borrower has email
+                if borrower.email:
+                    send_overdue_reminder_email(org, borrower, loan, schedule, days_overdue)
                 if result.get('success'):
                     total_processed += 1
                                 

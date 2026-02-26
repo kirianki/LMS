@@ -23,6 +23,7 @@ class SavingsAccountViewSet(TenantScopedViewSet):
     permission_classes = [permissions.IsAuthenticated, HasRolePermission]
     filter_backends = [DjangoFilterBackend, BranchScopingFilterBackend]
     filterset_fields = ['borrower', 'status']
+    ordering = ['id']
     
     def perform_create(self, serializer):
         from apps.branches.utils import get_user_branch

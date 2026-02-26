@@ -3,7 +3,10 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from apps.treasury.models import Transaction as TreasuryTransaction, CashAccount
-from apps.accounting.services import post_loan_disbursement, post_loan_repayment, post_external_expense, post_fee_income
+from apps.accounting.services import (
+    post_loan_disbursement, post_loan_repayment, post_external_expense, 
+    post_fee_income, post_investment_received, post_investor_payout
+)
 from apps.accounting.models import JournalEntry
 
 logger = logging.getLogger(__name__)
@@ -23,7 +26,10 @@ def record_money_event(event_type, instance, cash_account_id=None, user=None):
                 _handle_expense_paid(instance, cash_account_id, user)
             elif event_type == 'payroll_paid':
                 _handle_payroll_paid(instance, cash_account_id, user)
-            # Add others as needed
+            elif event_type == 'investment_received':
+                _handle_investment_received(instance, cash_account_id, user)
+            elif event_type == 'investor_payout':
+                _handle_investor_payout(instance, cash_account_id, user)
         except Exception as e:
             logger.error(f"Financial sync error for {event_type} on {instance}: {str(e)}", exc_info=True)
             raise e
@@ -105,7 +111,7 @@ def _handle_loan_disbursement(loan, cash_account_id=None, user=None):
             account=account,
             transaction_type=TreasuryTransaction.TransactionType.DEBIT,
             category=TreasuryTransaction.Category.LOAN_DISBURSEMENT,
-            amount=net_cash_out,
+            amount=loan.principal_amount - payoff_amount,
             description=desc,
             reference=loan.disbursement_reference or loan.loan_number,
             related_loan=loan,
@@ -247,3 +253,70 @@ def _handle_payroll_paid(payroll, cash_account_id=None, user=None):
             credits=[(gl_code, payroll.net_pay)],
             organization=getattr(payroll, 'organization', None)
         )
+
+def _handle_investment_received(investment, cash_account_id=None, user=None):
+    """Synchronize Treasury and GL for investment received."""
+    org = investment.investor.organization
+    account = _get_account(investment, cash_account_id, organization=org)
+    
+    # 1. Treasury Recording
+    if not TreasuryTransaction.objects.filter(reference=investment.investment_number).exists():
+        TreasuryTransaction.objects.create(
+            account=account,
+            transaction_type=TreasuryTransaction.TransactionType.CREDIT,
+            category=TreasuryTransaction.Category.INVESTMENT_RECEIVED,
+            amount=investment.principal_amount,
+            description=f"Investment received from {investment.investor.name}",
+            reference=investment.investment_number,
+            related_investment=investment,
+            created_by=user,
+            created_at=timezone.now()
+        )
+    
+    # 2. Accounting (GL)
+    gl_code = '1130' if account.account_type == CashAccount.AccountType.MOBILE_MONEY else '1110'
+    if not JournalEntry.objects.filter(reference=investment.investment_number).exists():
+        post_investment_received(investment, cash_account_code=gl_code)
+
+def _handle_investor_payout(payout, cash_account_id=None, user=None):
+    """Synchronize Treasury and GL for investor payout."""
+    org = payout.investment.investor.organization
+    account = _get_account(payout, cash_account_id, organization=org)
+    ref = payout.reference or f"PAYOUT-{payout.id}"
+    
+    # 1. Treasury Recording
+    if not TreasuryTransaction.objects.filter(reference=ref).exists():
+        TreasuryTransaction.objects.create(
+            account=account,
+            transaction_type=TreasuryTransaction.TransactionType.DEBIT,
+            category=TreasuryTransaction.Category.INVESTOR_PAYOUT,
+            amount=payout.amount,
+            description=f"{payout.get_payout_type_display()} payout for investment {payout.investment.investment_number}",
+            reference=ref,
+            related_investment=payout.investment,
+            created_by=user,
+            created_at=timezone.now()
+        )
+    
+    # 2. Accounting (GL)
+    gl_code = '1130' if account.account_type == CashAccount.AccountType.MOBILE_MONEY else '1110'
+    if not JournalEntry.objects.filter(reference=ref).exists():
+        post_investor_payout(payout, cash_account_code=gl_code)
+
+
+def sync_treasury_coa_balance(cash_account):
+    """
+    Sync a CashAccount's linked COA account balance to match the treasury balance.
+    Called after every treasury transaction to keep them in lockstep.
+    """
+    if not cash_account.coa_account:
+        return
+    
+    coa = cash_account.coa_account
+    if coa.balance != cash_account.current_balance:
+        logger.info(
+            f"Syncing COA {coa.code} balance: {coa.balance} → {cash_account.current_balance} "
+            f"(treasury account: {cash_account.name})"
+        )
+        coa.balance = cash_account.current_balance
+        coa.save(update_fields=['balance'])
