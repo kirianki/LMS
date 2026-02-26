@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+:root {
+  --app-bg: #F8FAFC;
+  --app-fg: #0F172A;
+  --app-primary: #2EAD8F;
+  --app-primary-fg: #FFFFFF;
+  --app-secondary: #3B82F6;
+  --app-secondary-fg: #FFFFFF;
+
+  --app-card: #FFFFFF;
+  --app-card-fg: #0F172A;
+
+  --app-border: rgba(15, 23, 42, 0.08);
+  --app-input: #FFFFFF;
+
+  --app-muted: #F1F5F9;
+  --app-muted-fg: #64748B;
+
+  --app-accent: #F1F5F9;
+  --app-accent-fg: #0F172A;
+
+  --app-glass-bg: rgba(255, 255, 255, 0.4);
+  /* Less opaque in light mode */
+  --app-glass-border: rgba(15, 23, 42, 0.05);
+}
+
+.dark {
+  --app-bg: #0F172A;
+  --app-fg: #F8FAFC;
+  --app-primary: #2EAD8F;
+  --app-primary-fg: #FFFFFF;
+  --app-secondary: #3B82F6;
+  --app-secondary-fg: #FFFFFF;
+
+  --app-card: #1E293B;
+  --app-card-fg: #F8FAFC;
+
+  --app-border: rgba(255, 255, 255, 0.1);
+  --app-input: #0F172A;
+
+  --app-muted: #1E293B;
+  --app-muted-fg: #94A3B8;
+
+  --app-accent: #334155;
+  --app-accent-fg: #F8FAFC;
+
+  --app-glass-bg: rgba(30, 41, 59, 0.7);
+  --app-glass-border: rgba(255, 255, 255, 0.1);
+}
+
+@theme inline {
+  --color-background: var(--app-bg);
+  --color-foreground: var(--app-fg);
+  --color-primary: var(--app-primary);
+  --color-primary-foreground: var(--app-primary-fg);
+  --color-secondary: var(--app-secondary);
+  --color-secondary-foreground: var(--app-secondary-fg);
+  --color-card: var(--app-card);
+  --color-card-foreground: var(--app-card-fg);
+  --color-border: var(--app-border);
+  --color-muted: var(--app-muted);
+  --color-muted-foreground: var(--app-muted-fg);
+  --color-accent: var(--app-accent);
+  --color-accent-foreground: var(--app-accent-fg);
+  --color-input: var(--app-input);
+
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-outfit);
+  --font-mono: monospace;
+}
+
+body {
+  background: var(--app-bg);
+  color: var(--app-fg);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.glass {
+  background: var(--app-glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--app-glass-border);
+  transition: background-color 0.3s, border-color 0.3s;
+}
