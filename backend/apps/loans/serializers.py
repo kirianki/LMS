@@ -361,6 +361,7 @@ class LoanRepaymentCreateSerializer(serializers.Serializer):
     reference_number = serializers.CharField(required=False, allow_blank=True)
     treasury_account_code = serializers.CharField(required=False, help_text="COA code for the treasury account (e.g., 1110 for Bank)")
     cash_account_id = serializers.UUIDField(required=False, help_text="Preferred: UUID of the CashAccount")
+    installment_id = serializers.UUIDField(required=False, allow_null=True, help_text="Optional: ID of the specific installment being paid")
     notes = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, data):
@@ -408,6 +409,8 @@ class PromiseToPaySerializer(serializers.ModelSerializer):
 class CollectionCaseSerializer(serializers.ModelSerializer):
     loan_number = serializers.ReadOnlyField(source='loan.loan_number')
     borrower_name = serializers.SerializerMethodField()
+    borrower_phone = serializers.ReadOnlyField(source='loan.borrower.phone_number')
+    borrower_id = serializers.ReadOnlyField(source='loan.borrower.id')
     status_display = serializers.ReadOnlyField(source='get_status_display')
     priority_display = serializers.ReadOnlyField(source='get_priority_display')
     assigned_to_name = serializers.ReadOnlyField(source='assigned_to.get_full_name')

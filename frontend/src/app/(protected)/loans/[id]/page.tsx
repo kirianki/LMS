@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import {
     ArrowLeft, Wallet, Calendar, TrendingUp, AlertCircle,
     User, FileText, Shield, DollarSign, Clock, CheckCircle2,
-    CreditCard, RefreshCw, MessageSquare, Edit3, Save, X, Upload
+    CreditCard, RefreshCw, MessageSquare, Edit3, Save, X, Upload, Send
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -147,6 +147,8 @@ export default function LoanDetailPage() {
     const [isGeneratingStatement, setIsGeneratingStatement] = useState(false);
     const [loanDocuments, setLoanDocuments] = useState<LoanDocument[]>([]);
     const [showUploadModal, setShowUploadModal] = useState(false);
+    const [showStatementDialog, setShowStatementDialog] = useState(false);
+    const [sendToBorrower, setSendToBorrower] = useState(false);
 
     const { user } = useAuthStore();
     const [isEditingSchedule, setIsEditingSchedule] = useState(false);
@@ -224,6 +226,12 @@ export default function LoanDetailPage() {
     const generateStatement = async () => {
         setIsGeneratingStatement(true);
         try {
+            // First, trigger the backend logic (optionally sends email)
+            const res = await api.post(`/loans/loans/${params.id}/statement/`, {
+                send_to_borrower: sendToBorrower
+            });
+
+            // Then, trigger the browser download as before
             const response = await api.get(`/loans/loans/${params.id}/statement/`, {
                 responseType: 'blob',
             });
@@ -235,6 +243,11 @@ export default function LoanDetailPage() {
             link.click();
             link.remove();
             window.URL.revokeObjectURL(url);
+
+            setShowStatementDialog(false);
+            if (sendToBorrower) {
+                alert('Statement generated and emailed to borrower!');
+            }
         } catch (error) {
             console.error('Failed to generate statement:', error);
             alert('Failed to generate statement. Please try again.');
@@ -280,7 +293,7 @@ export default function LoanDetailPage() {
                 </button>
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={generateStatement}
+                        onClick={() => setShowStatementDialog(true)}
                         disabled={isGeneratingStatement}
                         className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-muted/50 border border-border text-foreground text-sm font-bold hover:bg-muted transition-all disabled:opacity-50"
                     >
@@ -1042,7 +1055,7 @@ export default function LoanDetailPage() {
                 </div>
             </div>
 
-            {/* Payment Modal */}
+            {/* Upload Modal */}
             {
                 loan && (
                     <LoanDocumentUploadModal
@@ -1051,6 +1064,113 @@ export default function LoanDetailPage() {
                         isOpen={showUploadModal}
                         onClose={() => setShowUploadModal(false)}
                         onSuccess={fetchLoanDetails}
+                    />
+                )
+            }
+
+            {/* Statement Confirmation Dialog */}
+            {showStatementDialog && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="glass rounded-2xl border border-border shadow-2xl p-6 w-full max-w-md mx-4 animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 bg-primary/10 rounded-xl">
+                                <FileText className="h-5 w-5 text-primary" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-foreground font-heading">
+                                    Generate Loan Statement
+                                </h3>
+                                <p className="text-xs text-muted-foreground">
+                                    This will generate the latest statement PDF for this loan
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4 mb-6">
+                            <div className="p-4 rounded-xl bg-muted/30 border border-border">
+                                <p className="text-sm text-foreground mb-1">
+                                    <span className="font-bold">Facility:</span> {loan.loan_number}
+                                </p>
+                                <p className="text-sm text-foreground mb-1">
+                                    <span className="font-bold">Borrower:</span> {loan.borrower_name}
+                                </p>
+                                {loan.borrower_details?.email && (
+                                    <p className="text-sm text-muted-foreground">
+                                        <span className="font-bold">Email:</span> {loan.borrower_details.email}
+                                    </p>
+                                )}
+                            </div>
+
+                            {loan.borrower_details?.email ? (
+                                <label className="flex items-start gap-3 p-4 rounded-xl border border-border hover:bg-muted/20 transition-colors cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={sendToBorrower}
+                                        onChange={(e) => setSendToBorrower(e.target.checked)}
+                                        className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/20"
+                                    />
+                                    <div>
+                                        <p className="text-sm font-bold text-foreground flex items-center gap-2">
+                                            <Send className="h-3.5 w-3.5 text-primary" />
+                                            Email statement to borrower
+                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                            The statement will be sent to {loan.borrower_details.email}
+                                        </p>
+                                    </div>
+                                </label>
+                            ) : (
+                                <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+                                    <p className="text-xs text-amber-500 flex items-center gap-2 font-bold">
+                                        <AlertCircle className="h-3.5 w-3.5" />
+                                        Borrower does not have an email address on file.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-3">
+                            <button
+                                onClick={() => { setShowStatementDialog(false); setSendToBorrower(false); }}
+                                className="px-4 py-2 text-sm font-bold rounded-xl hover:bg-muted transition-colors text-muted-foreground"
+                                disabled={isGeneratingStatement}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={generateStatement}
+                                disabled={isGeneratingStatement}
+                                className="flex items-center gap-2 px-6 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:shadow-lg hover:shadow-primary/20 transition-all disabled:opacity-50"
+                            >
+                                {isGeneratingStatement ? (
+                                    <>
+                                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                        Generating...
+                                    </>
+                                ) : (
+                                    <>
+                                        <FileText className="h-4 w-4" />
+                                        Generate {sendToBorrower ? '& Send' : 'Statement'}
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Payment Modal */}
+            {
+                loan && (
+                    <RecordPaymentModal
+                        loan={loan}
+                        isOpen={showPaymentModal}
+                        onClose={() => {
+                            setShowPaymentModal(false);
+                            setSelectedInstallment(null);
+                        }}
+                        onSuccess={fetchLoanDetails}
+                        installment={selectedInstallment}
                     />
                 )
             }

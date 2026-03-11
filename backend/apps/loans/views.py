@@ -877,6 +877,7 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         payment_date = serializer.validated_data['payment_date']
         reference = serializer.validated_data.get('reference_number', '')
         notes = serializer.validated_data.get('notes', '')
+        installment_id = serializer.validated_data.get('installment_id')
 
         processor = PaymentProcessor()
         
@@ -906,24 +907,74 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 reference=reference,
                 payment_date=payment_date,
                 user=request.user,
+                installment_id=installment_id,
                 notes=notes,
                 cash_account_id=cash_account.id
             )
         
         return Response(LoanRepaymentSerializer(repayment).data, status=status.HTTP_201_CREATED)
     
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get', 'post'])
     def statement(self, request, pk=None):
-        """Download loan statement PDF."""
+        """Download or email loan statement PDF."""
         loan = self.get_object()
         
         pdf_buffer = generate_loan_statement(loan)
-        return FileResponse(
-            pdf_buffer,
-            as_attachment=True,
-            filename=f"statement_{loan.loan_number}.pdf",
-            content_type='application/pdf'
-        )
+        
+        if request.method == 'GET':
+            return FileResponse(
+                pdf_buffer,
+                as_attachment=True,
+                filename=f"statement_{loan.loan_number}.pdf",
+                content_type='application/pdf'
+            )
+            
+        # POST - generates and optionally emails
+        email_sent = False
+        send_to_borrower = request.data.get('send_to_borrower', False)
+        
+        if send_to_borrower:
+            try:
+                from apps.notifications.services import EmailService
+                borrower = loan.borrower
+                organization = loan.organization
+                
+                # Determine recipient email
+                recipient_email = None
+                recipient_name = ""
+                
+                if borrower.borrower_type in ['company', 'institution']:
+                    primary_contact = borrower.contacts.filter(is_primary=True).first()
+                    if primary_contact and primary_contact.email:
+                        recipient_email = primary_contact.email
+                        recipient_name = f"{primary_contact.first_name} {primary_contact.last_name}"
+                
+                if not recipient_email and borrower.email:
+                    recipient_email = borrower.email
+                    if borrower.borrower_type in ['company', 'institution']:
+                        recipient_name = borrower.business_name or ''
+                    else:
+                        recipient_name = f"{borrower.first_name} {borrower.last_name}"
+                
+                if recipient_email and organization:
+                    company_name = organization.company_name or 'Lender'
+                    email_service = EmailService(organization)
+                    result = email_service.send_email(
+                        recipient_email,
+                        f"Loan Statement - {loan.loan_number}",
+                        f"Dear {recipient_name},\n\nPlease find attached your loan statement for {loan.loan_number}.\n\nBest regards,\n{company_name}",
+                        related_loan=loan,
+                        related_borrower=borrower,
+                        attachments=[(f"Statement_{loan.loan_number}.pdf", pdf_buffer.getvalue(), 'application/pdf')]
+                    )
+                    email_sent = result.get('success', False)
+            except Exception as email_err:
+                logger.error(f"Failed to email statement: {email_err}", exc_info=True)
+                
+        return Response({
+            'status': 'success',
+            'email_sent': email_sent
+        })
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
@@ -1168,7 +1219,10 @@ class LoanDocumentViewSet(TenantScopedViewSet):
 @api_view(['GET'])
 def arrears_reports(request):
     """ Arrears Aging and PAR Dashboard """
-    from .services.arrears import get_arrears_aging_report, calculate_par_metrics, get_collections_forecast
+    from .services.arrears import get_arrears_aging_report, calculate_par_metrics, get_collections_forecast, update_all_loans_arrears_status
+    
+    # Refresh all arrears status to ensure data integrity for the report
+    update_all_loans_arrears_status()
     
     aging = get_arrears_aging_report()
     par = calculate_par_metrics()
@@ -1177,7 +1231,8 @@ def arrears_reports(request):
     return Response({
         'aging': aging,
         'par': par,
-        'forecast': forecast
+        'forecast': forecast,
+        'refreshed_at': timezone.now().isoformat()
     })
 
 

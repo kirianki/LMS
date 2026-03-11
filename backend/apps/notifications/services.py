@@ -18,8 +18,18 @@ class EmailService:
         Args:
             attachments: Optional list of tuples (filename, content_bytes, mimetype)
         """
-        if not self.org or not self.org.smtp_host:
-            logger.warning(f"Email configuration missing for organization: {self.org}")
+        from django.conf import settings
+        
+        # Determine which settings to use: global (.env) or organization specific
+        host = settings.EMAIL_HOST if settings.EMAIL_HOST_USER else self.org.smtp_host
+        port = settings.EMAIL_PORT if settings.EMAIL_HOST_USER else self.org.smtp_port
+        username = settings.EMAIL_HOST_USER if settings.EMAIL_HOST_USER else self.org.smtp_username
+        password = settings.EMAIL_HOST_PASSWORD if settings.EMAIL_HOST_USER else self.org.smtp_password
+        use_tls = settings.EMAIL_USE_TLS if settings.EMAIL_HOST_USER else self.org.smtp_use_tls
+        from_email = settings.DEFAULT_FROM_EMAIL or self.org.smtp_from_email or self.org.company_email
+
+        if not host:
+            logger.warning(f"Email configuration missing (global and org) for organization: {self.org}")
             return {"success": False, "error": "Email not configured"}
 
         # Create Log Entry (Queued)
@@ -37,17 +47,17 @@ class EmailService:
 
         try:
             connection = get_connection(
-                host=self.org.smtp_host,
-                port=self.org.smtp_port,
-                username=self.org.smtp_username,
-                password=self.org.smtp_password,
-                use_tls=self.org.smtp_use_tls,
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                use_tls=use_tls,
             )
             
             email = EmailMessage(
                 subject=subject,
                 body=body,
-                from_email=self.org.smtp_from_email or self.org.company_email,
+                from_email=from_email,
                 to=[recipient_email],
                 connection=connection,
             )

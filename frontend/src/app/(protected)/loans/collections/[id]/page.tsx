@@ -21,18 +21,21 @@ import LogInteractionModal from '@/components/collections/LogInteractionModal';
 import PromiseToPayModal from '@/components/collections/PromiseToPayModal';
 import RecoveryActionModal from '@/components/collections/RecoveryActionModal';
 import MessageModal from '@/components/common/MessageModal';
+import { use } from 'react';
 
 interface CollectionCaseDetailProps {
-    params: { id: string };
+    params: Promise<{ id: string }>;
 }
 
 export default function CollectionCaseDetailPage({ params }: CollectionCaseDetailProps) {
+    const { id } = use(params);
     const router = useRouter();
     const [caseData, setCaseData] = useState<any>(null);
     const [notes, setNotes] = useState<any[]>([]);
     const [promises, setPromises] = useState<any[]>([]);
     const [recoveryActions, setRecoveryActions] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'timeline' | 'promises' | 'recovery'>('timeline');
 
     // Modal states
@@ -43,33 +46,65 @@ export default function CollectionCaseDetailPage({ params }: CollectionCaseDetai
 
     useEffect(() => {
         fetchCaseData();
-    }, [params.id]);
+    }, [id]);
 
     const fetchCaseData = async () => {
+        if (!id || id === 'undefined') {
+            setIsLoading(false);
+            return;
+        }
+
         setIsLoading(true);
         try {
-            const [caseRes, notesRes, promisesRes, recoveryRes] = await Promise.all([
-                api.get(`/loans/collection-cases/${params.id}/`),
-                api.get(`/loans/collection-notes/?case=${params.id}`),
-                api.get(`/loans/promises-to-pay/?case=${params.id}`),
-                api.get(`/loans/recovery-actions/?loan=${params.id}`) // Note: recovery actions are linked to loan, not case
+            // First fetch the main case data
+            const caseRes = await api.get(`/loans/collection-cases/${id}/`);
+            const caseData = caseRes.data;
+            setCaseData(caseData);
+
+            // Then fetch related data using IDs from the case
+            const [notesRes, promisesRes, recoveryRes] = await Promise.all([
+                api.get(`/loans/collection-notes/?case=${id}`),
+                api.get(`/loans/promises-to-pay/?case=${id}`),
+                api.get(`/loans/recovery-actions/?loan=${caseData.loan}`)
             ]);
 
-            setCaseData(caseRes.data);
             setNotes(notesRes.data.results || notesRes.data || []);
             setPromises(promisesRes.data.results || promisesRes.data || []);
             setRecoveryActions(recoveryRes.data.results || recoveryRes.data || []);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to fetch case data:', error);
+            setError(error.response?.data?.detail || error.message || 'Failed to load collection case');
         } finally {
             setIsLoading(false);
         }
     };
 
-    if (isLoading || !caseData) {
+    if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-96">
+            <div className="flex flex-col items-center justify-center h-96 gap-4">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <p className="text-muted-foreground animate-pulse font-medium tracking-tight">Retrieving case intelligence...</p>
+            </div>
+        );
+    }
+
+    if (error || !caseData) {
+        return (
+            <div className="flex flex-col items-center justify-center h-96 gap-6 px-4">
+                <div className="p-5 rounded-3xl bg-red-500/10 border border-red-500/20 shadow-2xl shadow-red-500/10">
+                    <AlertCircle className="h-10 w-10 text-red-400" />
+                </div>
+                <div className="text-center max-w-md">
+                    <h2 className="text-2xl font-black text-foreground italic tracking-tight uppercase">Case Not Found</h2>
+                    <p className="text-sm text-muted-foreground mt-3 leading-relaxed">{error || 'The requested collection case could not be retrieved from our secure ledger.'}</p>
+                </div>
+                <button
+                    onClick={() => router.push('/loans/collections')}
+                    className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-white/[0.03] border border-white/10 hover:bg-white/[0.08] hover:border-white/20 transition-all font-bold uppercase text-[10px] tracking-widest text-foreground shadow-xl active:scale-95"
+                >
+                    <ArrowLeft className="h-3 w-3" />
+                    Return to Dashboard
+                </button>
             </div>
         );
     }
@@ -110,7 +145,7 @@ export default function CollectionCaseDetailPage({ params }: CollectionCaseDetai
                         Collection Case
                     </h1>
                     <p className="text-muted-foreground mt-1">
-                        Managing overdue loan: {caseData.loan?.loan_number}
+                        Managing overdue loan: {caseData.loan_number}
                     </p>
                 </div>
                 <div className="flex gap-2">
@@ -198,14 +233,12 @@ export default function CollectionCaseDetailPage({ params }: CollectionCaseDetai
                         </div>
                         <div className="flex justify-between">
                             <span className="text-muted-foreground">Phone:</span>
-                            <span className="font-semibold text-foreground">{caseData.loan?.borrower_phone || 'N/A'}</span>
+                            <span className="font-semibold text-foreground">{caseData.borrower_phone || 'N/A'}</span>
                         </div>
                         <div className="flex justify-between">
                             <span className="text-muted-foreground">Assigned To:</span>
                             <span className="font-semibold text-foreground">
-                                {caseData.assigned_to
-                                    ? `${caseData.assigned_to.first_name} ${caseData.assigned_to.last_name}`
-                                    : 'Unassigned'}
+                                {caseData.assigned_to_name || 'Unassigned'}
                             </span>
                         </div>
                     </div>
@@ -234,10 +267,10 @@ export default function CollectionCaseDetailPage({ params }: CollectionCaseDetai
                         <div className="flex justify-between">
                             <span className="text-muted-foreground">Loan Number:</span>
                             <Link
-                                href={`/loans/${caseData.loan?.id}`}
+                                href={`/loans/${caseData.loan}`}
                                 className="font-semibold text-primary hover:underline"
                             >
-                                {caseData.loan?.loan_number}
+                                {caseData.loan_number}
                             </Link>
                         </div>
                     </div>
@@ -389,27 +422,27 @@ export default function CollectionCaseDetailPage({ params }: CollectionCaseDetai
             <LogInteractionModal
                 isOpen={showLogInteraction}
                 onClose={() => setShowLogInteraction(false)}
-                caseId={params.id}
+                caseId={id}
                 onSuccess={fetchCaseData}
             />
             <PromiseToPayModal
                 isOpen={showPromiseToPay}
                 onClose={() => setShowPromiseToPay(false)}
-                caseId={params.id}
+                caseId={id}
                 onSuccess={fetchCaseData}
             />
             <RecoveryActionModal
                 isOpen={showRecoveryAction}
                 onClose={() => setShowRecoveryAction(false)}
-                loanId={caseData.loan?.id}
+                loanId={caseData.loan}
                 onSuccess={fetchCaseData}
             />
             <MessageModal
                 isOpen={showSendMessage}
                 onClose={() => setShowSendMessage(false)}
-                recipientPhone={caseData.loan?.borrower_phone || ''}
-                borrowerId={caseData.loan?.borrower_id}
-                loanId={caseData.loan?.id}
+                recipientPhone={caseData.borrower_phone || ''}
+                borrowerId={caseData.borrower_id}
+                loanId={caseData.loan}
                 onSuccess={fetchCaseData}
             />
         </div>

@@ -40,3 +40,7 @@ def sync_schedules_on_repayment(sender, instance, created, **kwargs):
     if created:
         loan = instance.loan
         loan.sync_schedules()
+        
+        # Recalculate arrears immediately upon payment
+        from .services.arrears import calculate_loan_arrears_status
+        calculate_loan_arrears_status(loan)

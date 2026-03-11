@@ -25,6 +25,15 @@ def calculate_loan_arrears_status(loan):
         loan.days_in_arrears = 0
         loan.arrears_category = 'current'
         loan.save(update_fields=['days_in_arrears', 'arrears_category'])
+        
+        # Resolve active collection cases
+        if hasattr(loan, 'collection_case') and loan.collection_case.status in ['active', 'escalated']:
+            loan.collection_case.status = 'resolved'
+            loan.collection_case.resolved_at = timezone.now()
+            loan.collection_case.days_overdue = 0
+            loan.collection_case.overdue_amount = Decimal('0.00')
+            loan.collection_case.save(update_fields=['status', 'resolved_at', 'days_overdue', 'overdue_amount'])
+            
         return {
             'is_in_arrears': False,
             'days_in_arrears': 0,
@@ -61,6 +70,41 @@ def calculate_loan_arrears_status(loan):
         
     loan.save(update_fields=['days_in_arrears', 'arrears_category', 'status'])
     
+    # Sync or Create active collection case
+    from apps.loans.models import CollectionCase
+    case, created = CollectionCase.objects.get_or_create(
+        loan=loan,
+        defaults={
+            'days_overdue': days_overdue,
+            'overdue_amount': total_overdue,
+            'priority': 'low',
+            'status': 'active'
+        }
+    )
+    
+    if not created and case.status in ['active', 'escalated']:
+        case.days_overdue = days_overdue
+        case.overdue_amount = total_overdue
+        
+    # Always update priority for active cases
+    if case.status in ['active', 'escalated']:
+        if days_overdue > 90:
+            case.priority = 'critical'
+        elif days_overdue > 60:
+            case.priority = 'high'
+        elif days_overdue > 30:
+            case.priority = 'medium'
+        else:
+            case.priority = 'low'
+        case.save()
+    elif not created and case.status == 'resolved' and days_overdue > 0:
+        # Re-open resolved case if it falls back into arrears
+        case.status = 'active'
+        case.days_overdue = days_overdue
+        case.overdue_amount = total_overdue
+        case.resolved_at = None
+        case.save()
+    
     return {
         'is_in_arrears': True,
         'days_in_arrears': days_overdue,
@@ -78,11 +122,11 @@ def get_arrears_aging_report():
     
     # Categories: Current, 1-30, 31-60, 61-90, 90+
     buckets = {
-        'current': {'count': 0, 'balance': Decimal('0.00'), 'arrears_amount': Decimal('0.00')},
-        '1-30': {'count': 0, 'balance': Decimal('0.00'), 'arrears_amount': Decimal('0.00')},
-        '31-60': {'count': 0, 'balance': Decimal('0.00'), 'arrears_amount': Decimal('0.00')},
-        '61-90': {'count': 0, 'balance': Decimal('0.00'), 'arrears_amount': Decimal('0.00')},
-        '90+': {'count': 0, 'balance': Decimal('0.00'), 'arrears_amount': Decimal('0.00')},
+        'current': {'count': 0, 'balance': Decimal('0.00'), 'amount': Decimal('0.00')},
+        '1-30': {'count': 0, 'balance': Decimal('0.00'), 'amount': Decimal('0.00')},
+        '31-60': {'count': 0, 'balance': Decimal('0.00'), 'amount': Decimal('0.00')},
+        '61-90': {'count': 0, 'balance': Decimal('0.00'), 'amount': Decimal('0.00')},
+        '90+': {'count': 0, 'balance': Decimal('0.00'), 'amount': Decimal('0.00')},
     }
     
     active_loans = Loan.objects.filter(status__in=['active', 'defaulted'])
@@ -104,9 +148,22 @@ def get_arrears_aging_report():
         if category in buckets:
             buckets[category]['count'] += 1
             buckets[category]['balance'] += loan.outstanding_balance
-            buckets[category]['arrears_amount'] += arrears_amount
+            buckets[category]['amount'] += arrears_amount
             
-    return buckets
+    return {
+        'buckets': buckets,
+        'updated_at': today.isoformat()
+    }
+
+
+def update_all_loans_arrears_status():
+    """
+    Recalculate arrears status for all active and defaulted loans.
+    """
+    active_loans = Loan.objects.filter(status__in=['active', 'defaulted'])
+    for loan in active_loans:
+        calculate_loan_arrears_status(loan)
+
 
 
 def calculate_par_metrics():
@@ -117,18 +174,18 @@ def calculate_par_metrics():
     active_loans = Loan.objects.filter(status__in=['active', 'defaulted'])
     total_portfolio = active_loans.aggregate(total=Sum('outstanding_balance'))['total'] or Decimal('1.00') # Avoid div by zero
     
+    par1_balance = active_loans.filter(days_in_arrears__gt=0).aggregate(total=Sum('outstanding_balance'))['total'] or Decimal('0.00')
     par30_balance = active_loans.filter(days_in_arrears__gt=30).aggregate(total=Sum('outstanding_balance'))['total'] or Decimal('0.00')
-    par60_balance = active_loans.filter(days_in_arrears__gt=60).aggregate(total=Sum('outstanding_balance'))['total'] or Decimal('0.00')
     par90_balance = active_loans.filter(days_in_arrears__gt=90).aggregate(total=Sum('outstanding_balance'))['total'] or Decimal('0.00')
     
     return {
         'total_portfolio': total_portfolio,
-        'par30_amount': par30_balance,
-        'par30_percent': (par30_balance / total_portfolio) * 100,
-        'par60_amount': par60_balance,
-        'par60_percent': (par60_balance / total_portfolio) * 100,
-        'par90_amount': par90_balance,
-        'par90_percent': (par90_balance / total_portfolio) * 100,
+        'par_1_plus_amount': par1_balance,
+        'par_1_plus_percent': (par1_balance / total_portfolio) * 100,
+        'par_30_plus_amount': par30_balance,
+        'par_30_plus_percent': (par30_balance / total_portfolio) * 100,
+        'par_90_plus_amount': par90_balance,
+        'par_90_plus_percent': (par90_balance / total_portfolio) * 100,
     }
 
 
