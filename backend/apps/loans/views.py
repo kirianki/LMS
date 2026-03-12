@@ -1494,6 +1494,8 @@ class LoanGuarantorViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             logger.error(f"Error recording payment: {str(e)}", exc_info=True)
             return Response(
                 {'error': f'Failed to record payment: {str(e)}'},

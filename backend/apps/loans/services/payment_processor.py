@@ -49,28 +49,43 @@ class PaymentProcessor:
             if remaining <= 0:
                 break
             
-            # Calculate what's still owed on this installment
-            total_paid_before = installment.paid_amount
+            # Calculate what's still owed on this installment (considering previous payments)
+            # Current logic: penalty_owed = installment.penalty_due. 
+            # But the installment.paid_amount might have already covered some components.
+            # We follow priority: Penalties > Interest > Principal.
             
-            # Penalties first
+            # 1. Penalties
             penalty_owed = max(Decimal('0'), installment.penalty_due)
-            penalty_payment = min(remaining, penalty_owed)
+            # Find out how much penalty is already paid. 
+            # Since penalties are highest priority, we assume first part of paid_amount goes to penalties.
+            penalty_paid_already = min(penalty_owed, installment.paid_amount)
+            penalty_remaining = penalty_owed - penalty_paid_already
+            
+            penalty_payment = min(remaining, penalty_remaining)
             remaining -= penalty_payment
             allocation['penalties'] += penalty_payment
             
-            # Then interest
+            # 2. Interest
             interest_owed = max(Decimal('0'), installment.interest_due)
+            # Interest is second priority.
+            interest_paid_already = min(interest_owed, max(Decimal('0'), installment.paid_amount - penalty_owed))
+            interest_remaining = interest_owed - interest_paid_already
+            
             if remaining > 0:
-                interest_payment = min(remaining, interest_owed)
+                interest_payment = min(remaining, interest_remaining)
                 remaining -= interest_payment
                 allocation['interest'] += interest_payment
             else:
                 interest_payment = Decimal('0')
             
-            # Then principal
+            # 3. Principal
             principal_owed = max(Decimal('0'), installment.principal_due)
+            # Principal is third priority.
+            principal_paid_already = min(principal_owed, max(Decimal('0'), installment.paid_amount - penalty_owed - interest_owed))
+            principal_remaining = principal_owed - principal_paid_already
+            
             if remaining > 0:
-                principal_payment = min(remaining, principal_owed)
+                principal_payment = min(remaining, principal_remaining)
                 remaining -= principal_payment
                 allocation['principal'] += principal_payment
             else:
@@ -153,15 +168,34 @@ class PaymentProcessor:
         if installment_id:
             # Pay specific installment
             installment = RepaymentSchedule.objects.get(id=installment_id, loan=loan)
-            payment_val = Decimal(str(amount))
+            remaining = Decimal(str(amount))
             
-            # For specific installment, we still follow priority if paying partially? 
-            # Or just apply to the total? Usually specific means apply to that schedule entry.
-            # Simplified for now: apply to principal mainly if not specified, 
-            # but usually it's better to use auto-allocate.
-            # Here we just treat it as a lump sum to that installment.
+            # Calculate breakdown for this specific installment
+            # We follow the same priority: Penalties > Interest > Principal
             
-            installment.paid_amount += payment_val
+            # 1. Penalties
+            penalty_owed = max(Decimal('0'), installment.penalty_due)
+            penalty_paid_already = min(penalty_owed, installment.paid_amount)
+            penalty_remaining = penalty_owed - penalty_paid_already
+            penalty_payment = min(remaining, penalty_remaining)
+            remaining -= penalty_payment
+            
+            # 2. Interest
+            interest_owed = max(Decimal('0'), installment.interest_due)
+            interest_paid_already = min(interest_owed, max(Decimal('0'), installment.paid_amount - penalty_owed))
+            interest_remaining = interest_owed - interest_paid_already
+            interest_payment = min(remaining, interest_remaining)
+            remaining -= interest_payment
+            
+            # 3. Principal
+            principal_owed = max(Decimal('0'), installment.principal_due)
+            principal_paid_already = min(principal_owed, max(Decimal('0'), installment.paid_amount - penalty_owed - interest_owed))
+            principal_remaining = principal_owed - principal_paid_already
+            principal_payment = min(remaining, principal_remaining)
+            remaining -= principal_payment
+            
+            # Update installment paid amount
+            installment.paid_amount += (penalty_payment + interest_payment + principal_payment)
             
             total_due = installment.total_due + installment.penalty_due
             if installment.paid_amount >= total_due:
@@ -171,25 +205,33 @@ class PaymentProcessor:
             
             installment.save()
             
-            # Simple breakdown for specific payment (assumes it's mostly principal if not specified)
-            # This is a bit arbitrary, but better than nothing.
-            # Ideally, specific payment should also be broken down by the caller or auto-split.
             allocation = {
-                'principal': payment_val,
-                'interest': Decimal('0'),
-                'penalties': Decimal('0'),
-                'fees': Decimal('0')
+                'principal': principal_payment,
+                'interest': interest_payment,
+                'penalties': penalty_payment,
+                'fees': Decimal('0'),
+                'overpayment': remaining # Treat leftover as overpayment if specific installment is overpaid
             }
             
             # Update loan balances
             loan.outstanding_principal = max(Decimal('0'), loan.outstanding_principal - allocation['principal'])
+            loan.outstanding_interest = max(Decimal('0'), loan.outstanding_interest - allocation['interest'])
+            loan.outstanding_penalties = max(Decimal('0'), loan.outstanding_penalties - allocation['penalties'])
             loan.outstanding_balance = (
                 loan.outstanding_principal + 
                 loan.outstanding_interest + 
                 loan.outstanding_penalties
             )
+            
+            if loan.outstanding_balance <= Decimal('0.01'):
+                loan.status = 'paid_off'
+                loan.closed_at = timezone.now()
+                
             loan.last_payment_date = payment_date
             loan.save()
+            
+            # Explicit schedule sync to handle status updates correctly
+            loan.sync_schedules()
             
         else:
             # Auto-allocate to oldest overdue installments

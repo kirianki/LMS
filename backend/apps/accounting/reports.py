@@ -412,7 +412,7 @@ def generate_portfolio_performance(organization=None):
     products = LoanProduct.objects.filter(is_active=True)
     if organization:
         products = products.filter(organization=organization)
-    par_metrics = calculate_par_metrics()
+    par_metrics = calculate_par_metrics(organization=organization)
     
     product_stats = []
     for p in products:
@@ -426,8 +426,9 @@ def generate_portfolio_performance(organization=None):
             'outstanding_balance': total_outstanding
         })
         
+    par30_pct = par_metrics.get('par_30_plus_percent', par_metrics.get('par30_percent', 0))
     return {
         'products': product_stats,
         'par_metrics': par_metrics,
-        'risk_level': 'High' if par_metrics['par30_percent'] > 10 else 'Moderate' if par_metrics['par30_percent'] > 5 else 'Low'
+        'risk_level': 'High' if par30_pct > 10 else 'Moderate' if par30_pct > 5 else 'Low'
     }

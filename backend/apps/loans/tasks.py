@@ -223,39 +223,39 @@ def process_mpesa_callback(callback_data, organization_id=None):
         
         # Record payment
         from apps.users.models import User
+        from apps.loans.services.payment_processor import PaymentProcessor
         # System user for this organization or any staff
         system_user = User.objects.filter(organization=organization, is_staff=True).first()
         
-        allocation = allocate_payment(loan, amount)
-        
-        LoanRepayment.objects.create(
+        # Create loan repayment record first (without allocation)
+        repayment = LoanRepayment.objects.create(
             organization=organization,
             loan=loan,
-            amount=amount,
+            amount=Decimal(str(amount)),
             payment_date=date.today(),
             payment_method='mpesa',
             reference_number=mpesa_ref,
             received_by=system_user,
-            notes="Auto-recorded from M-Pesa callback",
-            **allocation
+            notes="Auto-recorded from M-Pesa callback"
         )
         
-        # Update loan balances
-        loan.outstanding_principal -= allocation['principal_paid']
-        loan.outstanding_interest -= allocation['interest_paid']
-        loan.outstanding_penalties -= allocation['penalty_paid']
-        loan.outstanding_balance = (
-            loan.outstanding_principal + 
-            loan.outstanding_interest + 
-            loan.outstanding_penalties
+        # Use PaymentProcessor for consistent allocation and balance updates
+        processor = PaymentProcessor()
+        allocation = processor.allocate_payment_to_installments(
+            loan=loan,
+            amount=amount,
+            payment_date=date.today(),
+            repayment=repayment
         )
-        loan.last_payment_date = date.today()
         
-        if loan.outstanding_balance <= 0:
-            loan.status = 'paid_off'
-            loan.closed_at = timezone.now()
+        # Update repayment with allocation breakdown
+        repayment.principal_paid = allocation['principal']
+        repayment.interest_paid = allocation['interest']
+        repayment.penalty_paid = allocation['penalties']
+        repayment.fee_paid = allocation['fees']
+        repayment.overpayment = allocation.get('overpayment', Decimal('0.00'))
+        repayment.save()
         
-        loan.save()
         logger.info(f"Recorded M-Pesa payment of {amount} for {loan.loan_number} (Org: {organization.company_name})")
             
     except Exception as e:

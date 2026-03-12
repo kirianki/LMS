@@ -10,7 +10,7 @@ from apps.users.models import User
 from apps.customers.models import Borrower
 from apps.accounting.models import ChartOfAccount
 from apps.treasury.models import CashAccount
-from .models import LoanProduct, LoanApplication, Loan, RepaymentSchedule
+from .models import LoanProduct, LoanApplication, Loan, RepaymentSchedule, LoanRepayment
 
 
 class LoanProductTests(TestCase):
@@ -368,3 +368,50 @@ class LoanRepaymentTests(TestCase):
         
         self.loan.refresh_from_db()
         self.assertEqual(self.loan.outstanding_balance, Decimal('6900.00'))
+
+    def test_interest_allocation_accuracy(self):
+        """Test that interest is correctly allocated in partial and specific payments."""
+        # 1. Scenario: Partial payment of first installment
+        # First installment owes 3333.33 principal + 300 interest = 3633.33 total
+        # Pay 200. Should all go to interest.
+        url = reverse('loan-repayments', args=[self.loan.id])
+        data = {
+            "amount": "200.00",
+            "payment_date": str(date.today()),
+            "payment_method": "cash",
+            "reference_number": "PARTIAL-1",
+            "treasury_account_code": "1110",
+        }
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        
+        repayment = LoanRepayment.objects.get(reference_number="PARTIAL-1")
+        self.assertEqual(repayment.interest_paid, Decimal('200.00'))
+        self.assertEqual(repayment.principal_paid, Decimal('0.00'))
+        
+        # Verify COA Interest Income (4100)
+        interest_coa = ChartOfAccount.objects.get(code='4100', organization=self.org)
+        self.assertEqual(interest_coa.balance, Decimal('200.00'))
+        
+        # 2. Scenario: Specific payment to first installment
+        # Total interest on S1 was 300. 200 paid. 100 remaining.
+        # Pay another 500 specifically to S1. 
+        # Breakdown should be: 100 interest, 400 principal.
+        s1 = self.loan.schedules.get(installment_number=1)
+        data = {
+            "amount": "500.00",
+            "payment_date": str(date.today()),
+            "payment_method": "cash",
+            "reference_number": "SPECIFIC-1",
+            "installment_id": str(s1.id),
+            "treasury_account_code": "1110",
+        }
+        response = self.client.post(url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, f"Error: {response.data}")
+        
+        repayment2 = LoanRepayment.objects.get(reference_number="SPECIFIC-1")
+        self.assertEqual(repayment2.interest_paid, Decimal('100.00'))
+        self.assertEqual(repayment2.principal_paid, Decimal('400.00'))
+        
+        interest_coa.refresh_from_db()
+        self.assertEqual(interest_coa.balance, Decimal('300.00')) # 200 + 100

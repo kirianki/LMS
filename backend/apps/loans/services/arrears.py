@@ -166,12 +166,14 @@ def update_all_loans_arrears_status():
 
 
 
-def calculate_par_metrics():
+def calculate_par_metrics(organization=None):
     """
     Calculate Portfolio at Risk (PAR) metrics.
     PAR X = (Outstanding balance of all loans with arrears > X days) / Total GL Portfolio
     """
     active_loans = Loan.objects.filter(status__in=['active', 'defaulted'])
+    if organization:
+        active_loans = active_loans.filter(organization=organization)
     total_portfolio = active_loans.aggregate(total=Sum('outstanding_balance'))['total'] or Decimal('1.00') # Avoid div by zero
     
     par1_balance = active_loans.filter(days_in_arrears__gt=0).aggregate(total=Sum('outstanding_balance'))['total'] or Decimal('0.00')

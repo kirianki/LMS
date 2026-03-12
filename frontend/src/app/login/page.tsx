@@ -6,12 +6,14 @@ import { Mail, Lock, LogIn, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import api from '@/lib/api';
+import PageLoader from '@/components/ui/PageLoader';
 
 export default function LoginPage() {
     const router = useRouter();
     const { login } = useAuthStore();
     const { settings, isLoading } = useSettingsStore();
     const [showPassword, setShowPassword] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [formData, setFormData] = useState({
         email: '',
         password: '',
@@ -19,6 +21,7 @@ export default function LoginPage() {
 
     const handleLoginSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        setIsSubmitting(true);
         try {
             const response = await api.post('/auth/token/', formData);
             const { user, access, refresh } = response.data;
@@ -46,10 +49,13 @@ export default function LoginPage() {
         } catch (error) {
             console.error('Login failed:', error);
             alert('Invalid email or password.');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
-    if (isLoading) return <div className="flex h-screen items-center justify-center text-foreground font-medium">Loading Aurum Finance...</div>;
+    if (isLoading) return <PageLoader message="Loading settings..." />;
+
 
     return (
         <div className="flex min-h-screen items-center justify-center p-6 bg-background">
@@ -123,10 +129,20 @@ export default function LoginPage() {
 
                         <button
                             type="submit"
-                            className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary py-4 font-bold text-white shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 hover:translate-y-[-1px] active:scale-95"
+                            disabled={isSubmitting}
+                            className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary py-4 font-bold text-white shadow-lg shadow-primary/25 transition-all hover:bg-primary/90 hover:translate-y-[-1px] active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
                         >
-                            <LogIn className="h-5 w-5" />
-                            Sign In to Dashboard
+                            {isSubmitting ? (
+                                <>
+                                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                    Signing in...
+                                </>
+                            ) : (
+                                <>
+                                    <LogIn className="h-5 w-5" />
+                                    Sign In to Dashboard
+                                </>
+                            )}
                         </button>
                     </form>
 

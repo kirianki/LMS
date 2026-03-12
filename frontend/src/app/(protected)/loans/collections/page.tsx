@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, PhoneCall, MessageSquare, Users, Calendar, TrendingDown } from 'lucide-react';
+import { AlertCircle, PhoneCall, MessageSquare, Users, Calendar, TrendingDown, CheckCircle2, Clock } from 'lucide-react';
 import DataTable from '@/components/ui/DataTable';
 import api from '@/lib/api';
 import Link from 'next/link';
@@ -17,10 +17,14 @@ interface CollectionCase {
     days_overdue: number;
     overdue_amount: string | number;
     priority: string;
+    status: string;
+    status_display: string;
+    resolved_at: string | null;
     assigned_to?: string;
     assigned_to_name?: string;
     next_follow_up: string;
     borrower_name?: string;
+    borrower_phone?: string;
 }
 
 interface AgingReport {
@@ -117,24 +121,75 @@ export default function CollectionsPage() {
             accessor: (c: any) => (
                 <div>
                     <p className="font-medium text-foreground">{c.borrower_name || 'N/A'}</p>
+                    {c.borrower_phone && (
+                        <p className="text-xs text-muted-foreground">{c.borrower_phone}</p>
+                    )}
                 </div>
             ),
             header: 'Borrower'
         },
         {
+            // Status badge column
             accessor: (c: any) => {
+                const resolved = c.status === 'resolved';
+                const escalated = c.status === 'escalated';
+                const writtenOff = c.status === 'written_off';
+                const cls = resolved
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : escalated
+                        ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                        : writtenOff
+                            ? 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
+                            : 'bg-orange-500/10 text-orange-400 border-orange-500/20';
+                const Icon = resolved ? CheckCircle2 : Clock;
+                return (
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${cls}`}>
+                        <Icon className="h-3 w-3" />
+                        {c.status_display || c.status}
+                    </span>
+                );
+            },
+            header: 'Status'
+        },
+        {
+            accessor: (c: any) => {
+                const resolved = c.status === 'resolved';
                 const days = c.days_overdue || 0;
+                if (resolved) {
+                    return (
+                        <span className="inline-flex items-center gap-1 text-emerald-400 font-semibold text-sm">
+                            <CheckCircle2 className="h-4 w-4" />
+                            Paid
+                        </span>
+                    );
+                }
                 const color = days > 90 ? 'text-red-400' : days > 60 ? 'text-orange-400' : 'text-yellow-400';
                 return <span className={`font-bold ${color}`}>{days} days</span>;
             },
             header: 'Days Overdue'
         },
         {
-            accessor: (c: any) => (
-                <span className="font-semibold text-red-400">
-                    KES {Number(c.overdue_amount).toLocaleString()}
-                </span>
-            ),
+            accessor: (c: any) => {
+                const resolved = c.status === 'resolved';
+                const amount = Number(c.overdue_amount);
+                if (resolved) {
+                    return (
+                        <div>
+                            <span className="text-emerald-400 font-semibold text-sm">KES 0</span>
+                            {c.resolved_at && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                    Cleared {new Date(c.resolved_at).toLocaleDateString()}
+                                </p>
+                            )}
+                        </div>
+                    );
+                }
+                return (
+                    <span className="font-semibold text-red-400">
+                        KES {amount.toLocaleString()}
+                    </span>
+                );
+            },
             header: 'Amount Overdue'
         },
         {
@@ -146,7 +201,7 @@ export default function CollectionsPage() {
                     low: 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                 };
                 return (
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${priorityColors[c.priority]}`}>
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${priorityColors[c.priority] || 'bg-muted text-muted-foreground border-border'}`}>
                         {c.priority?.toUpperCase()}
                     </span>
                 );
@@ -162,40 +217,56 @@ export default function CollectionsPage() {
             header: 'Assigned To'
         },
         {
-            accessor: (c: any) => (
-                <span className="text-sm text-foreground">
-                    {c.next_follow_up ? new Date(c.next_follow_up).toLocaleDateString() : 'Not scheduled'}
-                </span>
-            ),
+            accessor: (c: any) => {
+                if (c.status === 'resolved') {
+                    return <span className="text-xs text-muted-foreground italic">—</span>;
+                }
+                return (
+                    <span className="text-sm text-foreground">
+                        {c.next_follow_up ? new Date(c.next_follow_up).toLocaleDateString() : 'Not scheduled'}
+                    </span>
+                );
+            },
             header: 'Next Follow-up'
         },
         {
-            accessor: (c: any) => (
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedCaseId(c.id);
-                            setShowLogInteraction(true);
-                        }}
-                        className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                        title="Log Interaction"
-                    >
-                        <PhoneCall className="h-4 w-4" />
-                    </button>
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedCaseId(c.id);
-                            setShowPromiseToPay(true);
-                        }}
-                        className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                        title="Record Promise to Pay"
-                    >
-                        <MessageSquare className="h-4 w-4" />
-                    </button>
-                </div>
-            ),
+            accessor: (c: any) => {
+                const resolved = c.status === 'resolved';
+                if (resolved) {
+                    return (
+                        <span className="inline-flex items-center gap-1 text-xs text-emerald-400 font-medium">
+                            <CheckCircle2 className="h-4 w-4" />
+                            Resolved
+                        </span>
+                    );
+                }
+                return (
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedCaseId(c.id);
+                                setShowLogInteraction(true);
+                            }}
+                            className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                            title="Log Interaction"
+                        >
+                            <PhoneCall className="h-4 w-4" />
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedCaseId(c.id);
+                                setShowPromiseToPay(true);
+                            }}
+                            className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                            title="Record Promise to Pay"
+                        >
+                            <MessageSquare className="h-4 w-4" />
+                        </button>
+                    </div>
+                );
+            },
             header: 'Actions'
         }
     ];
