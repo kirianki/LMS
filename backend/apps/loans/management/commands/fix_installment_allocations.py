@@ -96,14 +96,6 @@ class Command(BaseCommand):
             result = self._fix_loan(loan, dry_run)
             fixed_schedules += result['schedules_fixed']
             fixed_repayments += result['repayments_fixed']
-            if result['interest_delta'] != 0:
-                coa_adjustments.append((loan.organization, result['interest_delta']))
-
-        # ------------------------------------------------------------------ #
-        # 2. Apply COA balance corrections                                     #
-        # ------------------------------------------------------------------ #
-        if not dry_run and coa_adjustments:
-            self._apply_coa_corrections(coa_adjustments)
 
         # ------------------------------------------------------------------ #
         # 3. Summary                                                           #
@@ -222,7 +214,6 @@ class Command(BaseCommand):
                 abs(repayment.penalty_paid - correct_pen) > Decimal('0.01')
             )
             if changed:
-                interest_delta += (correct_i - repayment.interest_paid)
                 repayments_fixed += 1
                 self.stdout.write(
                     f"  Repayment {repayment} on {repayment.payment_date}: "
@@ -235,42 +226,55 @@ class Command(BaseCommand):
                     repayment.principal_paid = correct_p
                     repayment.penalty_paid = correct_pen
                     repayment.save(update_fields=['interest_paid', 'principal_paid', 'penalty_paid'])
+                    
+                    # Find old posted Journal Entry
+                    from apps.accounting.models import JournalEntry, LedgerEntry
+                    from apps.accounting.services import post_loan_repayment
+                    
+                    old_jes = JournalEntry.objects.filter(
+                        reference=repayment.reference_number, 
+                        status=JournalEntry.Status.POSTED,
+                        organization=loan.organization
+                    )
+                    
+                    cash_account_code = '1110'
+                    
+                    for old_je in old_jes:
+                        # Extract the debited cash account code
+                        for le in old_je.ledger_entries.all():
+                            if le.entry_type == LedgerEntry.EntryType.DEBIT and le.account.account_type == 'asset':
+                                cash_account_code = le.account.code
+                                break
+                                
+                        # Reverse COA balances
+                        for le in old_je.ledger_entries.all():
+                            acc = le.account
+                            if acc.account_type in ['asset', 'expense']:
+                                if le.entry_type == LedgerEntry.EntryType.DEBIT:
+                                    acc.balance -= le.amount
+                                else:
+                                    acc.balance += le.amount
+                            else:
+                                if le.entry_type == LedgerEntry.EntryType.CREDIT:
+                                    acc.balance -= le.amount
+                                else:
+                                    acc.balance += le.amount
+                            acc.save(update_fields=['balance'])
+                            
+                        # Void old Journal Entry
+                        old_je.status = JournalEntry.Status.VOID
+                        old_je.description = f"[VOIDED - Reallocation] {old_je.description}"
+                        old_je.save(update_fields=['status', 'description'])
+                        
+                    try:
+                        # Post new, Corrected Journal Entry
+                        post_loan_repayment(repayment=repayment, cash_account_code=cash_account_code)
+                        self.stdout.write(self.style.SUCCESS(f"    → Journal Entries recreated correctly."))
+                    except Exception as e:
+                        self.stdout.write(self.style.ERROR(f"    ! Error posting new JE for {repayment.reference_number}: {e}"))
 
         return {
             'schedules_fixed': schedules_fixed,
             'repayments_fixed': repayments_fixed,
-            'interest_delta': interest_delta,
         }
 
-    def _apply_coa_corrections(self, adjustments):
-        """Adjust Interest Income (4100) and Loan Portfolio (1210) COA balances."""
-        from apps.accounting.models import ChartOfAccount
-        from collections import defaultdict
-
-        # Aggregate per org
-        org_deltas = defaultdict(Decimal)
-        for org, delta in adjustments:
-            if org:
-                org_deltas[org.id] = (org_deltas[org.id] + delta, org)
-
-        for org_id, (delta, org) in org_deltas.items():
-            if delta == 0:
-                continue
-            try:
-                with transaction.atomic():
-                    # Interest Income (4100) — income account: credit increases balance
-                    interest_coa = ChartOfAccount.objects.get(code='4100', organization=org)
-                    interest_coa.balance += delta
-                    interest_coa.save(update_fields=['balance'])
-
-                    # Loan Portfolio (1210) — asset account: was over-credited
-                    portfolio_coa = ChartOfAccount.objects.get(code='1210', organization=org)
-                    portfolio_coa.balance -= delta
-                    portfolio_coa.save(update_fields=['balance'])
-
-                    self.stdout.write(self.style.SUCCESS(
-                        f"  COA org={org}: 4100 (Interest Income) {'+' if delta > 0 else ''}{delta}, "
-                        f"1210 (Portfolio) {'-' if delta > 0 else '+'}{abs(delta)}"
-                    ))
-            except ChartOfAccount.DoesNotExist as e:
-                self.stdout.write(self.style.WARNING(f"  Could not update COA for org {org}: {e}"))

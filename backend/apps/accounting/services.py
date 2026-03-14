@@ -140,11 +140,13 @@ def post_loan_repayment(repayment, cash_account_code='1110'):
         # Avoid creating unbalanced entries if allocation is missing
         return None
         
+    total_credits = sum(amount for _, amount in credits)
+    
     create_double_entry(
         date=repayment.payment_date,
         description=f"Loan Repayment: {repayment.loan.loan_number} from {repayment.loan.borrower}",
         reference=repayment.reference_number,
-        debits=[(cash_account_code, repayment.amount)],
+        debits=[(cash_account_code, total_credits)],
         credits=credits,
         organization=repayment.loan.organization
     )
