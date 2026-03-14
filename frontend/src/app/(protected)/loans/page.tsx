@@ -77,7 +77,7 @@ export default function LoansPage() {
             if (filters.product) params.product = filters.product;
             if (filters.arrears_category) params.arrears_category = filters.arrears_category;
 
-            const response = await api.get('/loans/loans/', { params });
+            const response = await api.get('/loans/', { params });
             const data = response?.data;
             if (data) {
                 const results = Array.isArray(data.results) ? data.results : (Array.isArray(data) ? data : []);

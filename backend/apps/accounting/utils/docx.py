@@ -347,3 +347,60 @@ def generate_general_ledger_docx(data, account_id, start_date, end_date, tenant)
     document.save(buffer)
     buffer.seek(0)
     return buffer
+
+def generate_arrears_management_docx(data, tenant):
+    """Generate Arrears Management Report DOCX."""
+    document = create_document(tenant, "COLLECTIONS & ARREARS MANAGEMENT REPORT")
+    document.add_paragraph(f"Report Date: {datetime.date.today().strftime('%B %d, %Y')}").alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # 1. PAR Metrics Section
+    document.add_heading("Portfolio at Risk (PAR) Metrics", level=2)
+    par = data.get('par', {})
+    par_data = [
+        ["PAR 1+ Day", f"{par.get('par_1_plus_percent', 0):.2f}%", format_currency(par.get('par_1_plus_amount', 0))],
+        ["PAR 30+ Days", f"{par.get('par_30_plus_percent', 0):.2f}%", format_currency(par.get('par_30_plus_amount', 0))],
+        ["PAR 90+ Days", f"{par.get('par_90_plus_percent', 0):.2f}%", format_currency(par.get('par_90_plus_amount', 0))],
+    ]
+    add_table(document, ["Metric", "Percentage", "Outstanding Amount"], par_data)
+    document.add_paragraph()
+
+    # 2. Arrears Aging Buckets
+    document.add_heading("Arrears Aging Buckets", level=2)
+    aging = data.get('aging', {}).get('buckets', {})
+    aging_data = []
+    for bucket_name in ['current', '1-30', '31-60', '61-90', '90+']:
+        b = aging.get(bucket_name, {'count': 0, 'amount': 0, 'balance': 0})
+        aging_data.append([
+            bucket_name.title(),
+            str(b['count']),
+            format_currency(b['amount']),
+            format_currency(b['balance'])
+        ])
+    add_table(document, ["Bucket", "Loan Count", "Arrears Amount", "Portfolio Balance"], aging_data)
+    document.add_paragraph()
+
+    # 3. Active Cases Table
+    document.add_heading("Detailed Collection Cases", level=2)
+    cases = data.get('cases', [])
+    if cases:
+        case_headers = ["Loan #", "Borrower", "Days", "Amount", "Priority", "Status"]
+        case_table_data = []
+        for c in cases:
+            case_table_data.append([
+                str(c.get('loan_number', '')),
+                str(c.get('borrower_name', 'N/A')),
+                str(c.get('days_overdue', 0)),
+                format_currency(c.get('overdue_amount', 0)),
+                c.get('priority', '').upper(),
+                c.get('status_display', '').title()
+            ])
+        add_table(document, case_headers, case_table_data)
+    else:
+        document.add_paragraph("No active collection cases found.")
+
+    add_footer(document, tenant)
+    buffer = BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+    return buffer
+

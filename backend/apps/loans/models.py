@@ -521,6 +521,34 @@ class Loan(models.Model):
         related_name='refinanced_loans',
         help_text="The new loan that paid off this one"
     )
+
+    # Restructuring tracking
+    is_restructured = models.BooleanField(
+        default=False,
+        help_text="True if this loan has been restructured in-place"
+    )
+    restructured_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this loan was last restructured"
+    )
+    restructured_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='restructured_loans',
+        help_text="Staff member who performed the restructuring"
+    )
+    restructure_notes = models.TextField(
+        blank=True,
+        help_text="Notes/reason for restructuring"
+    )
+    original_term = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="The original term of the loan before restructuring"
+    )
     
     last_payment_date = models.DateField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
@@ -619,6 +647,15 @@ class RepaymentSchedule(models.Model):
     
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     penalty_due = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+
+    # Per-bucket paid amounts — updated on every payment for accurate multi-payment tracking.
+    # These replace the heuristic (paid_amount - penalty_owed - interest_owed) previously used.
+    penalty_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'),
+                                       help_text="Penalty collected against this installment so far")
+    interest_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'),
+                                        help_text="Interest collected against this installment so far")
+    principal_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'),
+                                         help_text="Principal collected against this installment so far")
     
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     

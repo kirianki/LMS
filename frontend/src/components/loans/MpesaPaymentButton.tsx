@@ -32,7 +32,7 @@ export default function MpesaPaymentButton({ loan, installment, onSuccess }: Mpe
         setMessage('');
 
         try {
-            const response = await api.post(`/loans/loans/${loan.id}/initiate-mpesa-payment/`, {
+            const response = await api.post(`/loans/${loan.id}/initiate-mpesa-payment/`, {
                 phone_number: phone,
                 amount: Number(amount),
                 installment_id: installment?.id

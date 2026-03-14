@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
     ArrowLeft, Wallet, Calendar, TrendingUp, AlertCircle,
-    User, FileText, Shield, DollarSign, Clock, CheckCircle2,
+    User, FileText, Shield, ShieldCheck, DollarSign, Clock, CheckCircle2,
     CreditCard, RefreshCw, MessageSquare, Edit3, Save, X, Upload, Send
 } from 'lucide-react';
 import api from '@/lib/api';
@@ -13,6 +13,8 @@ import MpesaPaymentButton from '@/components/loans/MpesaPaymentButton';
 import LoanDocumentUploadModal from '@/components/loans/LoanDocumentUploadModal';
 import RecordPaymentModal from '@/components/loans/RecordPaymentModal';
 import LoanCommentsSection from '@/components/loans/LoanCommentsSection';
+import RestructureLoanModal from '@/components/loans/RestructureLoanModal';
+import EditPaymentModal from '@/components/loans/EditPaymentModal';
 
 interface LoanDocument {
     id: string;
@@ -114,6 +116,7 @@ interface Installment {
 }
 
 interface Repayment {
+    id: string;
     payment_date: string;
     payment_method: string;
     reference_number: string;
@@ -122,6 +125,8 @@ interface Repayment {
     interest_paid: number;
     penalty_paid: number;
     received_by_name: string;
+    notes?: string;
+    cash_account_id?: string;
 }
 
 interface LogEntry {
@@ -149,12 +154,17 @@ export default function LoanDetailPage() {
     const [showUploadModal, setShowUploadModal] = useState(false);
     const [showStatementDialog, setShowStatementDialog] = useState(false);
     const [sendToBorrower, setSendToBorrower] = useState(false);
+    const [showRestructureModal, setShowRestructureModal] = useState(false);
+    const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
+    const [selectedPayment, setSelectedPayment] = useState<Repayment | null>(null);
 
     const { user } = useAuthStore();
     const [isEditingSchedule, setIsEditingSchedule] = useState(false);
     const [editedSchedule, setEditedSchedule] = useState<Installment[]>([]);
     const [isSavingSchedule, setIsSavingSchedule] = useState(false);
-    const canEditSchedule = user?.is_superuser || (user?.role && ['Admin', 'Company Administrator', 'System Administrator'].includes(user.role.name)) || user?.permissions?.includes('loans.change_loan');
+    const canEditSchedule = !!user; // Any authenticated staff may correct payments; backend enforces tenant isolation
+    const canRestructure = user?.is_superuser || (user?.role && ['Admin', 'Company Administrator', 'System Administrator', 'Branch Manager', 'Loan Officer'].includes(user.role.name)) || user?.permissions?.includes('loans.change_loan');
+
 
     useEffect(() => {
         if (params.id) {
@@ -166,10 +176,10 @@ export default function LoanDetailPage() {
         setIsLoading(true);
         try {
             const [loanRes, scheduleRes, paymentsRes, historyRes] = await Promise.all([
-                api.get(`/loans/loans/${params.id}/`),
-                api.get(`/loans/loans/${params.id}/schedule/`),
-                api.get(`/loans/loans/${params.id}/repayments/`),
-                api.get(`/loans/loans/${params.id}/history/`)
+                api.get(`/loans/${params.id}/`),
+                api.get(`/loans/${params.id}/schedule/`),
+                api.get(`/loans/${params.id}/repayments/`),
+                api.get(`/loans/${params.id}/history/`)
             ]);
 
             setLoan(loanRes.data);
@@ -206,7 +216,7 @@ export default function LoanDetailPage() {
     const handleSaveSchedule = async () => {
         setIsSavingSchedule(true);
         try {
-            await api.post(`/loans/loans/${params.id}/update_schedule/`, {
+            await api.post(`/loans/${params.id}/update_schedule/`, {
                 schedule: editedSchedule.map((item: any) => ({
                     id: item.id,
                     due_date: item.due_date
@@ -227,12 +237,12 @@ export default function LoanDetailPage() {
         setIsGeneratingStatement(true);
         try {
             // First, trigger the backend logic (optionally sends email)
-            const res = await api.post(`/loans/loans/${params.id}/statement/`, {
+            const res = await api.post(`/loans/${params.id}/statement/`, {
                 send_to_borrower: sendToBorrower
             });
 
             // Then, trigger the browser download as before
-            const response = await api.get(`/loans/loans/${params.id}/statement/`, {
+            const response = await api.get(`/loans/${params.id}/statement/`, {
                 responseType: 'blob',
             });
             const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -299,6 +309,14 @@ export default function LoanDetailPage() {
                     >
                         {isGeneratingStatement ? 'Generating...' : <><FileText className="h-4 w-4" /> Statement</>}
                     </button>
+                    {canRestructure && (loan.status === 'active' || loan.status === 'overdue' || loan.status === 'defaulted') && (
+                        <button
+                            onClick={() => setShowRestructureModal(true)}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-orange-500/10 text-orange-600 border border-orange-500/20 text-sm font-bold hover:bg-orange-500/20 transition-all dark:bg-orange-500/20 dark:text-orange-400"
+                        >
+                            <RefreshCw className="h-4 w-4" /> Restructure
+                        </button>
+                    )}
                     <div className="flex items-center gap-2">
                         <MpesaPaymentButton loan={loan} onSuccess={fetchLoanDetails} />
                         <button
@@ -419,14 +437,14 @@ export default function LoanDetailPage() {
                         <div className="space-y-4">
                             <div className="flex items-center justify-between p-4 rounded-2xl bg-muted/30 border border-border/50 group hover:border-primary/20 transition-all">
                                 <div className="space-y-1">
-                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Unpaid Principal</p>
+                                    <p className="text-[10px] font-bold text-foreground uppercase tracking-widest">Unpaid Principal</p>
                                     <p className="font-black text-foreground">KES {Number(loan.outstanding_principal).toLocaleString()}</p>
                                 </div>
                                 <Shield className="h-5 w-5 text-muted-foreground/30 group-hover:text-primary/50 transition-colors" />
                             </div>
                             <div className="flex items-center justify-between p-4 rounded-2xl bg-muted/30 border border-border/50 group hover:border-primary/20 transition-all">
                                 <div className="space-y-1">
-                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Unpaid Interest</p>
+                                    <p className="text-[10px] font-bold text-foreground uppercase tracking-widest">Unpaid Interest</p>
                                     <p className="font-black text-foreground">KES {Number(loan.outstanding_interest).toLocaleString()}</p>
                                 </div>
                                 <Clock className="h-5 w-5 text-muted-foreground/30 group-hover:text-primary/50 transition-colors" />
@@ -477,7 +495,7 @@ export default function LoanDetailPage() {
                                     <Calendar className="h-5 w-5 text-primary" />
                                 </div>
                                 <div>
-                                    <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Origination</p>
+                                    <p className="text-[10px] font-black text-foreground uppercase tracking-widest">Origination</p>
                                     <p className="text-sm font-bold text-foreground">
                                         {new Date(loan.disbursement_date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}
                                     </p>
@@ -488,7 +506,7 @@ export default function LoanDetailPage() {
                                     <Clock className="h-5 w-5 text-primary" />
                                 </div>
                                 <div>
-                                    <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Expiry / Maturity</p>
+                                    <p className="text-[10px] font-black text-foreground uppercase tracking-widest">Expiry / Maturity</p>
                                     <p className="text-sm font-bold text-foreground">
                                         {new Date(loan.maturity_date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}
                                     </p>
@@ -501,11 +519,15 @@ export default function LoanDetailPage() {
                                             <Shield className="h-5 w-5 text-primary" />
                                         </div>
                                         <div>
-                                            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Security / Collateral</p>
+                                            <p className="text-[10px] font-black text-foreground uppercase tracking-widest">Security / Collateral</p>
                                             {loan.collateral_items && loan.collateral_items.length > 0 ? (
                                                 <div className="space-y-1">
                                                     {loan.collateral_items.map((coll, idx) => (
-                                                        <p key={coll.id || idx} className="text-sm font-bold text-foreground">
+                                                        <p
+                                                            key={coll.id || idx}
+                                                            onClick={() => coll.id && router.push(`/collateral/${coll.id}`)}
+                                                            className="text-sm font-bold text-foreground cursor-pointer hover:text-primary transition-colors"
+                                                        >
                                                             {coll.collateral_type?.replace('_', ' ').toUpperCase()} - {coll.reg_number || coll.lr_number || coll.description}
                                                         </p>
                                                     ))}
@@ -565,26 +587,27 @@ export default function LoanDetailPage() {
                 <div className="xl:col-span-8 flex flex-col space-y-6">
                     <div className="glass rounded-[2rem] border border-border shadow-sm h-full flex flex-col overflow-hidden">
                         {/* Tab Headers */}
-                        <div className="flex p-2 bg-muted/30 border-b border-border">
+                        <div className="flex p-2 bg-muted/30 border-b border-border overflow-x-auto no-scrollbar scroll-smooth">
                             {[
                                 { id: 'schedule', label: 'Repayment Schedule', icon: Calendar },
                                 { id: 'payments', label: 'Payment History', icon: DollarSign },
                                 { id: 'config', label: 'Configuration', icon: Shield },
                                 { id: 'disbursement', label: 'Disbursement', icon: Wallet },
                                 { id: 'supporting_docs', label: 'Docs', icon: FileText },
+                                { id: 'collateral', label: 'Collateral', icon: Shield },
                                 { id: 'history', label: 'Audit Trail', icon: FileText },
                                 { id: 'comments', label: 'Comments', icon: MessageSquare },
                             ].map((tab) => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-[10px] font-bold transition-all ${activeTab === tab.id
+                                    className={`flex-shrink-0 flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl text-[10px] font-bold transition-all ${activeTab === tab.id
                                         ? 'bg-background shadow-lg shadow-black/[0.03] text-primary border border-border'
                                         : 'text-muted-foreground hover:text-foreground hover:bg-white/50'
                                         }`}
                                 >
                                     <tab.icon className={`h-3 w-3 ${activeTab === tab.id ? 'text-primary' : 'text-muted-foreground'}`} />
-                                    <span className="uppercase tracking-widest">{tab.label}</span>
+                                    <span className="uppercase tracking-widest whitespace-nowrap">{tab.label}</span>
                                 </button>
                             ))}
                         </div>
@@ -639,7 +662,7 @@ export default function LoanDetailPage() {
                                                     {installment.installment_number}
                                                 </div>
                                                 <div>
-                                                    <div className="text-xs font-black text-muted-foreground uppercase tracking-widest mb-1 flex items-center gap-2">
+                                                    <div className="text-xs font-black text-foreground uppercase tracking-widest mb-1 flex items-center gap-2">
                                                         <span>Due Date:</span>
                                                         {isEditingSchedule && installment.status !== 'paid' ? (
                                                             <input
@@ -702,7 +725,7 @@ export default function LoanDetailPage() {
                                     )) : (
                                         <div className="text-center py-12 border-2 border-dashed border-border rounded-3xl">
                                             <Calendar className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
-                                            <p className="text-sm font-bold text-muted-foreground">No schedule generated yet</p>
+                                            <p className="text-sm font-bold text-foreground">No schedule generated yet</p>
                                         </div>
                                     )}
                                 </div>
@@ -713,7 +736,7 @@ export default function LoanDetailPage() {
                                     {repayments.length > 0 ? repayments.map((payment, index) => (
                                         <div
                                             key={index}
-                                            className="relative flex items-center justify-between p-6 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 hover:border-emerald-500/30 transition-all duration-300"
+                                            className="group relative flex items-center justify-between p-6 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 hover:border-emerald-500/30 transition-all duration-300"
                                         >
                                             <div className="flex items-center gap-5">
                                                 <div className="h-12 w-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-600 border border-emerald-500/20">
@@ -723,18 +746,48 @@ export default function LoanDetailPage() {
                                                     <p className="text-xs font-black text-emerald-600/70 uppercase tracking-[0.15em] mb-1">
                                                         Successfully Recorded • {new Date(payment.payment_date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
                                                     </p>
-                                                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+                                                    <p className="text-[10px] font-bold text-foreground uppercase tracking-widest flex items-center gap-2">
                                                         <CreditCard className="h-3 w-3" /> {payment.payment_method} | <FileText className="h-3 w-3" /> {payment.reference_number || 'TRX-N/A'}
                                                     </p>
                                                 </div>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="text-2xl font-black text-emerald-600 tabular-nums">
-                                                    KES {Number(payment.amount).toLocaleString()}
-                                                </p>
-                                                <p className="text-[10px] font-bold text-muted-foreground mt-1 uppercase tracking-tighter">
-                                                    By: {payment.received_by_name || 'System'}
-                                                </p>
+                                            <div className="flex items-center gap-8">
+                                                <div className="text-right">
+                                                    <p className="text-2xl font-black text-emerald-600 tabular-nums">
+                                                        KES {Number(payment.amount).toLocaleString()}
+                                                    </p>
+                                                    <p className="text-[10px] font-bold text-foreground mt-1 uppercase tracking-tighter">
+                                                        By: {payment.received_by_name || 'System'}
+                                                    </p>
+                                                </div>
+                                                {canEditSchedule && (
+                                                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button
+                                                            onClick={() => {
+                                                                setSelectedPayment(payment);
+                                                                setShowEditPaymentModal(true);
+                                                            }}
+                                                            className="p-2 rounded-xl bg-white border border-border text-muted-foreground hover:text-primary transition-all hover:shadow-lg"
+                                                            title="Edit Payment"
+                                                        >
+                                                            <Edit3 className="h-4 w-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={async () => {
+                                                                if (confirm('Are you sure you want to delete this payment? This will trigger a full loan reconciliation.')) {
+                                                                    try {
+                                                                        await api.delete(`/loans/${params.id}/repayments/`, { data: { repayment_id: payment.id } });
+                                                                        fetchLoanDetails();
+                                                                    } catch (e) { alert('Failed to delete payment'); }
+                                                                }
+                                                            }}
+                                                            className="p-2 rounded-xl bg-white border border-border text-muted-foreground hover:text-rose-500 transition-all hover:shadow-lg"
+                                                            title="Delete Payment"
+                                                        >
+                                                            <X className="h-4 w-4" />
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     )) : (
@@ -817,13 +870,13 @@ export default function LoanDetailPage() {
                                             <p className="text-2xl font-black text-foreground tabular-nums">KES {Number(loan.disbursed_amount).toLocaleString()}</p>
                                         </div>
                                         <div className="p-6 rounded-2xl bg-muted/30 border border-border">
-                                            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Payment Method</p>
+                                            <p className="text-[10px] font-black text-foreground uppercase tracking-widest mb-1">Payment Method</p>
                                             <p className="text-xl font-bold text-foreground flex items-center gap-2">
                                                 <Wallet className="h-4 w-4 text-primary" /> {loan.disbursement_method?.replace('_', ' ').toUpperCase()}
                                             </p>
                                         </div>
                                         <div className="p-6 rounded-2xl bg-muted/30 border border-border">
-                                            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Transaction Ref</p>
+                                            <p className="text-[10px] font-black text-foreground uppercase tracking-widest mb-1">Transaction Ref</p>
                                             <p className="text-lg font-black text-foreground">{loan.disbursement_reference || 'N/A'}</p>
                                         </div>
                                     </div>
@@ -1009,6 +1062,87 @@ export default function LoanDetailPage() {
                                 </div>
                             )}
 
+                            {activeTab === 'collateral' && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-sm font-black text-muted-foreground uppercase tracking-wider">Pledged Collaterals</h4>
+                                        <div className="flex items-center gap-2">
+                                            <div className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-[10px] font-black uppercase tracking-widest border border-primary/20">
+                                                LTV Ratio: {loan.ltv_ratio?.toFixed(1)}%
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-4">
+                                        {loan.collateral_items && loan.collateral_items.length > 0 ? loan.collateral_items.map((item: any) => (
+                                            <div
+                                                key={item.id}
+                                                onClick={() => router.push(`/collateral/${item.id}`)}
+                                                className="group relative flex flex-col md:flex-row md:items-center justify-between p-6 rounded-3xl bg-background border border-border hover:border-primary/20 hover:shadow-xl transition-all duration-500 overflow-hidden cursor-pointer"
+                                            >
+                                                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                                                    <Shield className="h-24 w-24 text-primary" />
+                                                </div>
+
+                                                <div className="flex items-start gap-6 relative z-10">
+                                                    <div className="h-14 w-14 rounded-2xl bg-primary/5 flex items-center justify-center text-primary border border-primary/10 group-hover:bg-primary group-hover:text-white transition-all duration-500">
+                                                        <Shield className="h-7 w-7" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="flex items-center gap-3 mb-1">
+                                                            <h5 className="text-lg font-black text-foreground">{item.asset_type?.replace('_', ' ').toUpperCase()}</h5>
+                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${item.status === 'in_custody' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                                                                item.status === 'discharged' ? 'bg-blue-500/10 text-blue-600 border-blue-500/20' :
+                                                                    'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                                                                }`}>
+                                                                {item.status?.replace('_', ' ')}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-sm text-muted-foreground line-clamp-2 max-w-md">{item.description}</p>
+                                                        <div className="flex items-center gap-4 mt-3">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Market Value</span>
+                                                                <span className="text-sm font-black text-foreground">KES {Number(item.market_value || 0).toLocaleString()}</span>
+                                                            </div>
+                                                            <div className="h-8 w-px bg-border mx-1" />
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">FSV (75%)</span>
+                                                                <span className="text-sm font-black text-primary">KES {Number(item.forced_sale_value || 0).toLocaleString()}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-6 md:mt-0 flex items-center gap-3 relative z-10">
+                                                    {item.status !== 'in_custody' && (
+                                                        <button
+                                                            className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold hover:shadow-lg hover:shadow-primary/30 transition-all flex items-center gap-2"
+                                                            onClick={(e) => { e.stopPropagation(); /* handle port to custody */ }}
+                                                        >
+                                                            <ShieldCheck className="h-4 w-4" /> Port to Custody
+                                                        </button>
+                                                    )}
+                                                    {item.status === 'in_custody' && (
+                                                        <button
+                                                            className="px-4 py-2 rounded-xl border border-rose-200 text-rose-600 text-xs font-bold hover:bg-rose-50 transition-all flex items-center gap-2"
+                                                            onClick={(e) => { e.stopPropagation(); /* handle discharge */ }}
+                                                        >
+                                                            <RefreshCw className="h-4 w-4" /> Initiate Discharge
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )) : (
+                                            <div className="text-center py-20 border-2 border-dashed border-border rounded-[2.5rem] bg-muted/10">
+                                                <Shield className="h-16 w-16 text-muted-foreground/20 mx-auto mb-4" />
+                                                <h4 className="text-xl font-black text-foreground">No Collateral Pledged</h4>
+                                                <p className="text-sm text-muted-foreground mt-2 max-w-xs mx-auto">This facility is currently unsecured. Collateral items can be added during the application or appraisal stage.</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
                             {activeTab === 'history' && (
                                 <div className="space-y-6 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-primary/20 before:via-border before:to-transparent">
                                     {historyLogs.length > 0 ? historyLogs.map((log) => (
@@ -1028,7 +1162,7 @@ export default function LoanDetailPage() {
                                                         <h4 className="text-sm font-black text-foreground uppercase tracking-tight">
                                                             {log.description}
                                                         </h4>
-                                                        <time className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest whitespace-nowrap">
+                                                        <time className="text-[10px] font-bold text-foreground uppercase tracking-widest whitespace-nowrap">
                                                             {new Date(log.timestamp).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                                         </time>
                                                     </div>
@@ -1036,7 +1170,7 @@ export default function LoanDetailPage() {
                                                         <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-black text-primary">
                                                             {log.user_name ? log.user_name.split(' ').map(n => n[0]).join('') : 'SY'}
                                                         </div>
-                                                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mt-0.5">
+                                                        <span className="text-[10px] font-bold text-foreground uppercase tracking-widest leading-none mt-0.5">
                                                             By <span className="text-foreground">{log.user_name || 'System System'}</span>
                                                         </span>
                                                     </div>
@@ -1174,6 +1308,33 @@ export default function LoanDetailPage() {
                     />
                 )
             }
+
+            {/* Restructure Modal */}
+            {
+                loan && (
+                    <RestructureLoanModal
+                        loan={loan}
+                        isOpen={showRestructureModal}
+                        onClose={() => setShowRestructureModal(false)}
+                        onSuccess={() => {
+                            setShowRestructureModal(false);
+                            fetchLoanDetails();
+                        }}
+                    />
+                )
+            }
+
+            {/* Edit Payment Modal */}
+            <EditPaymentModal
+                loanId={params.id as string}
+                payment={selectedPayment}
+                isOpen={showEditPaymentModal}
+                onClose={() => {
+                    setShowEditPaymentModal(false);
+                    setSelectedPayment(null);
+                }}
+                onSuccess={fetchLoanDetails}
+            />
         </div >
     );
 }

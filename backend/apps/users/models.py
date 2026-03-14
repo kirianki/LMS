@@ -17,6 +17,9 @@ class Role(models.Model):
     
     history = HistoricalRecords()
 
+    class Meta:
+        ordering = ['name']
+
     def __str__(self):
         return self.name
 
@@ -61,6 +64,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = ['first_name', 'last_name']
     
     history = HistoricalRecords()
+
+    class Meta:
+        ordering = ['-date_joined']
 
     def get_full_name(self):
         full_name = f"{self.first_name} {self.last_name}".strip()
@@ -129,6 +135,9 @@ class StaffDocument(models.Model):
     name = models.CharField(max_length=255, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ['-uploaded_at']
+
     def __str__(self):
         return f"{self.get_category_display()} - {self.user.email}"
 
@@ -163,6 +172,9 @@ class StaffContract(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     history = HistoricalRecords()
 
+    class Meta:
+        ordering = ['-created_at']
+
     def __str__(self):
         return f"Contract for {self.user.email} ({self.status})"
 
@@ -182,6 +194,9 @@ class StaffAllowance(models.Model):
     amount = models.DecimalField(max_digits=12, decimal_places=2)  # Amount or Percentage value
     percentage_basis = models.CharField(max_length=20, choices=PercentageBasis.choices, default=PercentageBasis.BASIC, blank=True)
 
+    class Meta:
+        ordering = ['name']
+
     def __str__(self):
         return f"{self.name} for {self.contract.user.email}"
 
@@ -200,6 +215,9 @@ class StaffDeduction(models.Model):
     calculation_type = models.CharField(max_length=20, choices=CalculationType.choices, default=CalculationType.FIXED)
     amount = models.DecimalField(max_digits=12, decimal_places=2)  # Amount or Percentage value
     percentage_basis = models.CharField(max_length=20, choices=PercentageBasis.choices, default=PercentageBasis.BASIC, blank=True)
+
+    class Meta:
+        ordering = ['name']
 
     def __str__(self):
         return f"{self.name} for {self.contract.user.email}"

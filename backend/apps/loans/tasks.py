@@ -123,8 +123,8 @@ def calculate_loan_penalties():
 
         # Determine the penalty base amount
         if product.penalty_type == 'percentage':
-            # Always calculated on the arrears principal
-            arrears_principal = schedule.principal_due
+            # Calculate based on the UNPAID principal of this specific installment
+            arrears_principal = max(Decimal('0'), schedule.principal_due - schedule.principal_paid)
             rate = product.penalty_value / Decimal('100')
             base_penalty = arrears_principal * rate
         else:  # fixed

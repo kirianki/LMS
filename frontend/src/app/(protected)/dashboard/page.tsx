@@ -26,6 +26,10 @@ interface DashboardData {
     trends?: { month: string; disbursements: number }[];
     branch_performance?: { name: string; portfolio_value: number; active_loans: number }[];
     product_performance?: { name: string; portfolio_value: number; count: number }[];
+    total_collections_mtd: number;
+    revenue_mtd: number;
+    upcoming_repayments?: { loan_number: string; amount_due: number; due_date: string; borrower_name: string }[];
+    collections_breakdown?: { month: string; year: number; principal: number; interest: number; penalty: number }[];
 }
 
 export default function DashboardPage() {

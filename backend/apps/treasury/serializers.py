@@ -19,8 +19,14 @@ class TransactionSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Transaction
-        fields = '__all__'
+        fields = [
+            'id', 'organization', 'account', 'account_name', 'transaction_type', 
+            'transaction_type_display', 'category', 'category_display', 'amount', 
+            'description', 'reference', 'counterparty_coa', 'balance_after', 
+            'created_by', 'created_at'
+        ]
         read_only_fields = ('balance_after', 'created_by', 'created_at')
+
 
 
 class DailySnapshotSerializer(serializers.ModelSerializer):

@@ -146,7 +146,7 @@ function CollateralForm() {
                 dataToSend.append('document_upload', documentFile);
             }
 
-            await api.post('/collateral/collateral/', dataToSend, {
+            await api.post('/collateral/', dataToSend, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                 },

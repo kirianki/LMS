@@ -51,6 +51,8 @@ interface Collateral {
     chassis_number?: string;
     engine_number?: string;
     color?: string;
+    valuation_history?: any[];
+    linked_loans?: any[];
 }
 
 export default function CollateralDetailPage() {
@@ -63,7 +65,7 @@ export default function CollateralDetailPage() {
 
     const fetchDetail = async () => {
         try {
-            const response = await api.get(`/collateral/collateral/${params.id}/`);
+            const response = await api.get(`/collateral/${params.id}/`);
             setCollateral(response.data);
         } catch (error) {
             console.error('Failed to fetch collateral detail:', error);
@@ -80,7 +82,7 @@ export default function CollateralDetailPage() {
         if (!confirm(`Are you sure you want to change status to ${newStatus}?`)) return;
         setIsUpdating(true);
         try {
-            await api.patch(`/collateral/collateral/${params.id}/`, { status: newStatus });
+            await api.patch(`/collateral/${params.id}/`, { status: newStatus });
             await fetchDetail();
         } catch (error: any) {
             console.error('Status update failed:', error);
@@ -96,11 +98,26 @@ export default function CollateralDetailPage() {
         if (!confirm('Confirm you have physically verified the Security Deed?')) return;
         setIsUpdating(true);
         try {
-            await api.patch(`/collateral/collateral/${params.id}/`, { is_charged: true });
+            await api.patch(`/collateral/${params.id}/`, { is_charged: true });
             await fetchDetail();
         } catch (error) {
             console.error('Verification failed:', error);
             alert('Failed to verify charge.');
+        } finally {
+            setIsUpdating(false);
+        }
+    };
+
+    const handleDischarge = async () => {
+        if (!confirm('Are you sure you want to discharge this collateral? This will release it from any security hold.')) return;
+        setIsUpdating(true);
+        try {
+            await api.post(`/collateral/${params.id}/discharge/`);
+            await fetchDetail();
+        } catch (error: any) {
+            console.error('Discharge failed:', error);
+            const errorMsg = error.response?.data?.error || 'Failed to discharge collateral.';
+            alert(errorMsg);
         } finally {
             setIsUpdating(false);
         }
@@ -116,6 +133,10 @@ export default function CollateralDetailPage() {
 
     if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading details...</div>;
     if (!collateral) return <div className="p-8 text-center text-red-400">Collateral not found</div>;
+
+    // Calculate exposure
+    const totalExposure = collateral.linked_loans?.reduce((sum, loan) => sum + parseFloat(loan.balance || 0), 0) || 0;
+    const lvrRatio = collateral.market_value > 0 ? (totalExposure / collateral.market_value) * 100 : 0;
 
     return (
         <div className="space-y-6 pb-12">
@@ -137,13 +158,19 @@ export default function CollateralDetailPage() {
                         <p className="text-muted-foreground mt-1 capitalize">{collateral.collateral_type?.replace('_', ' ') || 'Other'} • Pledged by {collateral.borrower_name}</p>
                     </div>
                 </div>
-                <button
-                    onClick={() => router.push(`/collateral/${params.id}/edit`)}
-                    className="flex items-center gap-2 px-6 py-2 rounded-lg bg-input border border-border text-slate-300 hover:text-foreground transition-colors text-sm font-semibold"
-                >
-                    <Edit className="h-4 w-4" />
-                    Edit Details
-                </button>
+                <div className="flex items-center gap-3">
+                    <div className="text-right mr-4 px-4 border-r border-border">
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">Active Exposure</p>
+                        <p className="text-lg font-bold text-foreground">{formatCurrency(totalExposure)}</p>
+                    </div>
+                    <button
+                        onClick={() => router.push(`/collateral/${params.id}/edit`)}
+                        className="flex items-center gap-2 px-6 py-2 rounded-lg bg-input border border-border text-slate-300 hover:text-foreground transition-colors text-sm font-semibold"
+                    >
+                        <Edit className="h-4 w-4" />
+                        Edit Details
+                    </button>
+                </div>
             </div>
 
             {/* Value Cards */}
@@ -172,7 +199,9 @@ export default function CollateralDetailPage() {
                         <ShieldCheck className="h-4 w-4" />
                         <span className="text-[10px] font-bold uppercase tracking-widest">LVR Ratio</span>
                     </div>
-                    <p className="text-3xl font-bold text-blue-400 tracking-tight">0%</p>
+                    <p className={`text-3xl font-bold tracking-tight ${lvrRatio > 80 ? 'text-red-400' : lvrRatio > 60 ? 'text-amber-400' : 'text-blue-400'}`}>
+                        {lvrRatio.toFixed(1)}%
+                    </p>
                     <p className="text-[10px] text-muted-foreground mt-2">Loan to Value Risk coverage</p>
                 </div>
             </div>
@@ -180,7 +209,7 @@ export default function CollateralDetailPage() {
             {/* Tabs */}
             <div className="glass rounded-xl border border-border overflow-hidden">
                 <div className="flex border-b border-border">
-                    {['overview', 'documents', 'management'].map((tab) => (
+                    {['overview', 'exposure', 'documents', 'management'].map((tab) => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
@@ -251,17 +280,93 @@ export default function CollateralDetailPage() {
                         </div>
                     )}
 
+                    {activeTab === 'exposure' && (
+                        <div className="space-y-8">
+                            <div>
+                                <h3 className="text-foreground font-bold text-sm uppercase tracking-wider mb-4">Active Loan Exposure</h3>
+                                {collateral.linked_loans && collateral.linked_loans.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {collateral.linked_loans.map((loan: any) => (
+                                            <div key={loan.id} className="flex items-center justify-between p-4 rounded-xl bg-input border border-border hover:border-primary/50 transition-colors cursor-pointer" onClick={() => router.push(`/loans/${loan.id}`)}>
+                                                <div className="flex items-center gap-4">
+                                                    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                                                        <FileText className="h-5 w-5" />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-foreground font-bold">{loan.loan_number}</p>
+                                                        <p className="text-[10px] text-muted-foreground uppercase tracking-widest">{loan.status}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-foreground font-bold">{formatCurrency(parseFloat(loan.balance || 0))}</p>
+                                                    <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Curr Balance</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-8 border border-dashed border-border rounded-xl">
+                                        <p className="text-muted-foreground text-sm">No active loans linked to this collateral.</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-foreground font-bold text-sm uppercase tracking-wider">Valuation History</h3>
+                                    <button
+                                        onClick={() => router.push(`/collateral/${params.id}/valuation/new`)}
+                                        className="px-4 py-2 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs font-bold hover:bg-primary/20 transition-all flex items-center gap-2"
+                                    >
+                                        <TrendingUp className="h-3 w-3" />
+                                        Log New Valuation
+                                    </button>
+                                </div>
+
+                                {collateral.valuation_history && collateral.valuation_history.length > 0 ? (
+                                    <div className="space-y-4">
+                                        {collateral.valuation_history.map((report: any) => (
+                                            <div key={report.id} className="p-4 rounded-xl bg-input border border-border">
+                                                <div className="flex justify-between items-start mb-3">
+                                                    <div>
+                                                        <p className="text-foreground font-bold text-sm">Valued by {report.valuer_name || 'System'}</p>
+                                                        <p className="text-xs text-muted-foreground">{new Date(report.valuation_date).toLocaleDateString()}</p>
+                                                    </div>
+                                                    {report.report_file && (
+                                                        <a href={report.report_file} target="_blank" rel="noreferrer" className="text-primary hover:text-primary/80 transition-colors">
+                                                            <Download className="h-4 w-4" />
+                                                        </a>
+                                                    )}
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Market Value</p>
+                                                        <p className="text-foreground font-bold">{formatCurrency(parseFloat(report.market_value))}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Forced Sale Value</p>
+                                                        <p className="text-amber-500 font-bold">{formatCurrency(parseFloat(report.forced_sale_value))}</p>
+                                                    </div>
+                                                </div>
+                                                {report.notes && (
+                                                    <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">{report.notes}</p>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-8 border border-dashed border-border rounded-xl">
+                                        <p className="text-muted-foreground text-sm">No valuation history recorded.</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {activeTab === 'documents' && (
                         <div className="space-y-6">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-foreground font-bold text-sm uppercase tracking-wider">Asset Documentation</h3>
-                                <button
-                                    onClick={() => router.push(`/collateral/${params.id}/valuation/new`)}
-                                    className="px-4 py-2 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs font-bold hover:bg-primary/20 transition-all flex items-center gap-2"
-                                >
-                                    <TrendingUp className="h-3 w-3" />
-                                    Add Valuation Report
-                                </button>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -368,7 +473,7 @@ export default function CollateralDetailPage() {
                                             </div>
                                             <button
                                                 disabled={collateral.status !== 'pledged' || isUpdating}
-                                                onClick={() => handleStatusUpdate('discharged')}
+                                                onClick={handleDischarge}
                                                 className="w-full py-2.5 rounded-lg bg-emerald-600/20 border border-emerald-600/30 text-emerald-500 text-xs font-bold hover:bg-emerald-600/30 transition-all disabled:opacity-50"
                                             >
                                                 Discharge Security

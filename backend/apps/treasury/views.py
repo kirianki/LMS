@@ -46,11 +46,21 @@ class TransactionViewSet(TenantScopedViewSet):
     filterset_fields = ['account', 'transaction_type', 'category']
     
     def perform_create(self, serializer):
-        super().perform_create(serializer)
-        instance = serializer.instance
-        if not instance.created_by:
-            instance.created_by = self.request.user
-            instance.save()
+        from .services.integrity import post_manual_treasury_transaction
+        
+        # Save the transaction first
+        instance = serializer.save(created_by=self.request.user)
+        
+        # Then post to GL if counterparty_coa is provided
+        try:
+            post_manual_treasury_transaction(instance)
+        except Exception as e:
+            # We don't want to fail the transaction creation if GL posting fails,
+            # but we should log it. In a production system, we might want more robust error handling.
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to post manual treasury transaction {instance.id} to GL: {str(e)}")
+
 
 
 class DailySnapshotViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):

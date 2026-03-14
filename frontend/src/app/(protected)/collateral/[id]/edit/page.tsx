@@ -62,7 +62,7 @@ export default function EditCollateralPage() {
                 const [borrowersRes, valuersRes, collateralRes] = await Promise.all([
                     api.get('/customers/borrowers/'),
                     api.get('/collateral/valuers/'),
-                    api.get(`/collateral/collateral/${collateralId}/`)
+                    api.get(`/collateral/${collateralId}/`)
                 ]);
 
                 setBorrowers(borrowersRes.data.results || borrowersRes.data);
@@ -133,7 +133,7 @@ export default function EditCollateralPage() {
                 dataToSend.append('document_upload', documentFile);
             }
 
-            await api.patch(`/collateral/collateral/${collateralId}/`, dataToSend, {
+            await api.patch(`/collateral/${collateralId}/`, dataToSend, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                 },

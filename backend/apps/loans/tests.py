@@ -4,7 +4,8 @@ from rest_framework import status
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from decimal import Decimal
-from datetime import date
+from datetime import date, timedelta
+from django.utils import timezone
 
 from apps.users.models import User
 from apps.customers.models import Borrower
@@ -247,6 +248,52 @@ class LoanApplicationLifecycleTests(TestCase):
         self.assertEqual(application.status, 'rejected')
         self.assertEqual(application.rejection_reason, "Insufficient credit score")
 
+    def test_ltv_enforcement_during_approval(self):
+        """Test multi-collateral LTV requirements during fast approval."""
+        from apps.collateral.models import Collateral
+
+        self.product.requires_collateral = True
+        self.product.min_collateral_value = Decimal('140000.00')
+        self.product.save()
+
+        app = LoanApplication.objects.create(
+            organization=self.org, borrower=self.customer, product=self.product,
+            requested_amount=Decimal('50000.00'), requested_term=6, status='under_review',
+            created_by=self.user
+        )
+
+        c1 = Collateral.objects.create(
+            organization=self.org, borrower=self.customer, collateral_type='motor_vehicle',
+            status='available', market_value=Decimal('120000.00'), forced_sale_value=Decimal('100000.00'),
+            valuation_date=timezone.now().date(),
+            is_charged=True, tracker_installed=True
+        )
+        c2 = Collateral.objects.create(
+            organization=self.org, borrower=self.customer, collateral_type='motor_vehicle',
+            status='available', market_value=Decimal('60000.00'), forced_sale_value=Decimal('50000.00'),
+            valuation_date=timezone.now().date(),
+            is_charged=True, tracker_installed=True
+        )
+
+        url = reverse('loanapplication-approve', args=[app.id])
+        data = { "approved_amount": "50000.00", "approved_term": 6, "approved_interest_rate": "24.00", "approved_interest_method": "flat"}
+        
+        # Test 1: No collateral linked (Fails)
+        res = self.client.post(url, data, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("requires collateral", str(res.data))
+        
+        # Test 2: One collateral linked, but insufficient FSV (100k < 140k)
+        app.collaterals.add(c1)
+        res = self.client.post(url, data, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("below the product minimum", str(res.data))
+        
+        # Test 3: Multiple collaterals linked, meeting FSV (100k + 50k = 150k > 140k)
+        app.collaterals.add(c2)
+        res = self.client.post(url, data, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK, f"Approval failed: {res.data}")
+
 
 class LoanRepaymentTests(TestCase):
     def setUp(self):
@@ -415,3 +462,246 @@ class LoanRepaymentTests(TestCase):
         
         interest_coa.refresh_from_db()
         self.assertEqual(interest_coa.balance, Decimal('300.00')) # 200 + 100
+    def test_multi_payment_interest_allocation(self):
+        """
+        Verify that multiple partial payments to the same installment correctly 
+        track already-paid interest and don't re-allocate.
+        S1: 300 interest, 3333.33 principal.
+        """
+        url = reverse('loan-repayments', args=[self.loan.id])
+        
+        # 1. Pay 100. Should go entirely to interest.
+        self.client.post(url, {
+            "amount": "100.00",
+            "payment_date": str(date.today()),
+            "payment_method": "cash",
+            "reference_number": "MULTI-1",
+            "treasury_account_code": "1110",
+        }, format='json')
+        
+        s1 = self.loan.schedules.get(installment_number=1)
+        self.assertEqual(s1.interest_paid, Decimal('100.00'))
+        self.assertEqual(s1.principal_paid, Decimal('0.00'))
+        
+        # 2. Pay 250 more. 
+        # Breakdown should be: 200 interest (to finish the 300) and 50 principal.
+        # BEFORE FIX: This would have incorrectly allocated 250 to interest because it
+        # would see 'installment.paid_amount' was only 100, and assume 300 interest was still owed.
+        self.client.post(url, {
+            "amount": "250.00",
+            "payment_date": str(date.today()),
+            "payment_method": "cash",
+            "reference_number": "MULTI-2",
+            "treasury_account_code": "1110",
+        }, format='json')
+        
+        s1.refresh_from_db()
+        self.assertEqual(s1.interest_paid, Decimal('300.00'))
+        self.assertEqual(s1.principal_paid, Decimal('50.00'))
+        self.assertEqual(s1.paid_amount, Decimal('350.00'))
+
+        # Verify LoanRepayment records
+        rep2 = LoanRepayment.objects.get(reference_number="MULTI-2")
+        self.assertEqual(rep2.interest_paid, Decimal('200.00'))
+        self.assertEqual(rep2.principal_paid, Decimal('50.00'))
+
+    def test_penalty_on_partial_principal(self):
+        """
+        Verify that percentage penalties are calculated on UNPAID principal only.
+        Principal due: 3333.33. Penalty rate: 10% (Fixed in this test).
+        """
+        from apps.loans.tasks import calculate_loan_penalties
+        
+        # Configure product for 10% daily penalty (simulated)
+        self.product.penalty_type = 'percentage'
+        self.product.penalty_value = Decimal('10.00')
+        self.product.penalty_grace_period = 5
+        self.product.penalty_basis = 'per_day'
+        self.product.save()
+
+        # 1. Pay 1333.33 of principal. Remaining principal owe: 2000.00
+
+        # First pay off curiosity interest (300) then 1333.33 principal = 1633.33 total
+        url = reverse('loan-repayments', args=[self.loan.id])
+        self.client.post(url, {
+            "amount": "1633.33",
+            "payment_date": str(date.today()),
+            "payment_method": "cash",
+            "reference_number": "PARTIAL-P",
+            "treasury_account_code": "1110",
+        }, format='json')
+        
+        s1 = self.loan.schedules.get(installment_number=1)
+        self.assertEqual(s1.principal_paid, Decimal('1333.33'))
+        
+        # 2. Force installment to overdue and past grace period
+        s1.status = 'overdue'
+        s1.due_date = date.today() - timedelta(days=10) # past 5 day grace
+        s1.save()
+        
+        # 3. Trigger penalty calculation
+        calculate_loan_penalties()
+        
+        s1.refresh_from_db()
+        # Unpaid Principal = 3333.33 - 1333.33 = 2000.00
+        # Penalty = 10% of 2000.00 * (10 days - 5 days grace) = 200 * 5 = 1000
+        self.assertEqual(s1.penalty_due, Decimal('1000.00'))
+
+    def test_in_place_restructuring(self):
+        """
+        Verify that an active/overdue loan can be restructured in-place.
+        """
+        # Set loan to overdue with some penalties
+        self.loan.status = 'overdue'
+        self.loan.outstanding_penalties = Decimal('500.00')
+        self.loan.save()
+
+        # Mark first schedule as overdue
+        s1 = self.loan.schedules.get(installment_number=1)
+        s1.status = 'overdue'
+        s1.penalty_due = Decimal('500.00')
+        s1.save()
+
+        restructure_url = reverse('loan-restructure', args=[self.loan.id])
+        data = {
+            'new_term': 6,
+            'new_interest_rate': '15.00',
+            'new_frequency': 'monthly',
+            'capitalize_arrears': True,
+            'waive_penalties': False,
+            'notes': 'Restructuring due to hardship'
+        }
+        
+        # Ensure outstanding balance before restructure
+        self.assertEqual(self.loan.outstanding_principal, Decimal('10000.00'))
+        self.assertEqual(self.loan.outstanding_interest, Decimal('900.00'))
+
+        response = self.client.post(restructure_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, f"Restructure failed: {response.data}")
+        
+        self.loan.refresh_from_db()
+        
+        # Check loan status and fields
+        self.assertEqual(self.loan.status, 'active')
+        self.assertTrue(self.loan.is_restructured)
+        self.assertEqual(self.loan.term, 6)
+        self.assertEqual(self.loan.interest_rate, Decimal('15.00'))
+        self.assertEqual(self.loan.original_term, 3)
+        self.assertEqual(self.loan.restructure_notes, 'Restructuring due to hardship')
+        
+        # Check areas capitalized (Principal should now be 10000 + 900 + 500 = 11400)
+        self.assertEqual(self.loan.outstanding_principal, Decimal('11400.00'))
+        # The new interest generated for 11400 at 15% flat over 6 months = 855.00
+        self.assertEqual(self.loan.outstanding_interest, Decimal('855.00'))
+        self.assertEqual(self.loan.outstanding_penalties, Decimal('0.00'))
+        
+        # Check schedules (should be 6 new ones)
+        self.assertEqual(self.loan.schedules.count(), 6)
+        new_s1 = self.loan.schedules.get(installment_number=1)
+        self.assertEqual(new_s1.status, 'pending')
+        # Total principal to be scheduled = 11400. 11400 / 6 = 1900
+        self.assertEqual(new_s1.principal_due, Decimal('1900.00'))
+
+
+class CollateralManagementTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        from apps.accounts.models import Organization
+        self.org = Organization.objects.create(company_name="Test Org")
+        self.user = User.objects.create_superuser(email='collat@system.com', password='pwd')
+        self.client.force_authenticate(user=self.user)
+        self._setup_coa()
+        
+        from apps.treasury.models import CashAccount
+        cash = CashAccount.objects.create(
+            organization=self.org, name="Default Cash", 
+            account_type='cash', opening_balance=Decimal('1000000.00'),
+            is_active=True,
+            coa_account=ChartOfAccount.objects.get(code='1130', organization=self.org)
+        )
+        
+        from apps.customers.models import Borrower
+        self.customer = Borrower.objects.create(
+            organization=self.org, first_name="Test", last_name="User", 
+            email="test@collat.com", phone_number="123456", id_number="COLL-123"
+        )
+        
+        from apps.collateral.models import Collateral
+        self.collateral = Collateral.objects.create(
+            organization=self.org, borrower=self.customer, collateral_type='motor_vehicle',
+            status='available', market_value=120000, forced_sale_value=100000,
+            valuation_date=timezone.now().date(),
+            is_charged=True, tracker_installed=True
+        )
+        
+        self.product = LoanProduct.objects.create(
+            organization=self.org, name="Test Product", code="TP_COLLAT",
+            suggested_interest_rate=12, interest_type="flat",
+            min_amount=1000, max_amount=1000000
+        )
+        
+        app = LoanApplication.objects.create(
+            organization=self.org, borrower=self.customer, product=self.product,
+            requested_amount=50000, requested_term=6, status='disbursed',
+            created_by=self.user
+        )
+        
+        self.loan = Loan.objects.create(
+            organization=self.org, borrower=self.customer, product=self.product,
+            application=app, loan_number="L099", status='active', 
+            principal_amount=50000, total_interest=3000, total_fees=0,
+            disbursed_amount=50000, disbursement_date=timezone.now().date(),
+            maturity_date=timezone.now().date() + timedelta(days=180),
+            term=6, interest_rate=12, interest_method='flat',
+            outstanding_balance=53000, outstanding_principal=50000, 
+            outstanding_interest=3000, outstanding_penalties=0
+        )
+        self.loan.collaterals.add(self.collateral)
+
+    def test_manual_incharge_and_discharge(self):
+        """Test the explicit lifecycle logic of pleading and discharging collateral."""
+        # 1. Incharge Collateral
+        url = reverse('loan-incharge-collateral', args=[self.loan.id])
+        res = self.client.post(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK, f"Incharge failed: {res.data}")
+        self.collateral.refresh_from_db()
+        self.assertEqual(self.collateral.status, 'pledged')
+        
+        # 2. Try to discharge while loan is active (should fail due to exposure)
+        discharge_url = reverse('collateral-discharge', args=[self.collateral.id])
+        res = self.client.post(discharge_url)
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("still secures active or overdue loans", str(res.data))
+        
+        # 3. Payoff loan and initiate discharge protocol
+        self.loan.status = 'paid_off'
+        self.loan.save()
+        
+        init_discharge_url = reverse('loan-initiate-discharge', args=[self.loan.id])
+        res = self.client.post(init_discharge_url)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        
+        # 4. Finalize the discharge at the Collateral level
+        res = self.client.post(discharge_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.collateral.refresh_from_db()
+        self.assertEqual(self.collateral.status, 'available')
+
+    def _setup_coa(self):
+        from apps.accounting.models import ChartOfAccount
+        coa_data = [
+            ('1110', 'Default Bank', 'asset'),
+            ('1130', 'Mpesa Account', 'asset'),
+            ('1210', 'Loan Portfolio', 'asset'),
+            ('4100', 'Interest Income', 'income'),
+            ('4200', 'Fee Income', 'income'),
+            ('4300', 'Penalty Income', 'income'),
+        ]
+        for code, name, acc_type in coa_data:
+            ChartOfAccount.objects.get_or_create(
+                code=code,
+                defaults={'name': name, 'account_type': acc_type, 'organization': self.org}
+            )
+
+
+

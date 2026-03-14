@@ -106,6 +106,15 @@ class Transaction(models.Model):
     related_expense = models.ForeignKey(
         'expenses.Expense', on_delete=models.SET_NULL, null=True, blank=True, related_name='treasury_transactions'
     )
+    counterparty_coa = models.ForeignKey(
+        'accounting.ChartOfAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='treasury_transactions',
+        help_text="The opposite side of the transaction for manual records"
+    )
+
     
     balance_after = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     

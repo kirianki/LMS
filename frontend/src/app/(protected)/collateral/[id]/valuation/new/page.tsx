@@ -1,25 +1,45 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ArrowLeft, Save, FileText, Upload, Calendar, TrendingUp, TrendingDown } from 'lucide-react';
+import {
+    ArrowLeft,
+    TrendingUp,
+    Save,
+    Upload,
+    Loader2
+} from 'lucide-react';
 import api from '@/lib/api';
 
 export default function NewValuationReportPage() {
     const router = useRouter();
     const params = useParams();
+    const [valuers, setValuers] = useState<any[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [reportFile, setReportFile] = useState<File | null>(null);
 
     const [formData, setFormData] = useState({
-        valuer_company: '',
+        collateral: params.id as string,
         market_value: '',
         forced_sale_value: '',
         valuation_date: new Date().toISOString().split('T')[0],
+        valuer: '',
         notes: '',
     });
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    useEffect(() => {
+        const fetchValuers = async () => {
+            try {
+                const res = await api.get('/collateral/valuers/');
+                setValuers(res.data.results || res.data);
+            } catch (error) {
+                console.error('Failed to fetch valuers:', error);
+            }
+        };
+        fetchValuers();
+    }, []);
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
 
@@ -32,37 +52,34 @@ export default function NewValuationReportPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
-
         try {
             const dataToSend = new FormData();
-            dataToSend.append('collateral', params.id as string);
-            dataToSend.append('valuer_company', formData.valuer_company);
-            dataToSend.append('market_value', formData.market_value);
-            dataToSend.append('forced_sale_value', formData.forced_sale_value);
-            dataToSend.append('valuation_date', formData.valuation_date);
-            dataToSend.append('notes', formData.notes);
+
+            Object.entries(formData).forEach(([key, value]) => {
+                if (value) dataToSend.append(key, value.toString());
+            });
 
             if (reportFile) {
                 dataToSend.append('report_file', reportFile);
             }
 
             await api.post('/collateral/valuation-reports/', dataToSend, {
-                headers: { 'Content-Type': 'multipart/form-data' }
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
             });
-
-            // Return to collateral detail
             router.push(`/collateral/${params.id}`);
         } catch (error) {
-            console.error('Failed to submit report:', error);
-            alert('Failed to submit valuation report. Please check the data.');
+            console.error('Failed to save valuation report:', error);
+            alert('Failed to save valuation report. Please check required fields.');
         } finally {
             setIsSubmitting(false);
         }
     };
 
     return (
-        <div className="space-y-6 max-w-2xl mx-auto">
-            <div className="flex items-center gap-4">
+        <div className="space-y-6 max-w-2xl mx-auto pb-12">
+            <div className="flex items-center gap-4 mb-8">
                 <button
                     onClick={() => router.back()}
                     className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors"
@@ -70,122 +87,122 @@ export default function NewValuationReportPage() {
                     <ArrowLeft className="h-5 w-5" />
                 </button>
                 <div>
-                    <h1 className="text-3xl font-bold text-foreground font-heading">Submit Valuation Report</h1>
-                    <p className="text-muted-foreground mt-1">Record a new valuation from an accredited partner</p>
+                    <h1 className="text-3xl font-bold text-foreground font-heading flex items-center gap-3">
+                        <TrendingUp className="h-6 w-6 text-primary" />
+                        Log New Valuation
+                    </h1>
+                    <p className="text-muted-foreground mt-1">Submit an accredited valuation report to update asset values.</p>
                 </div>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-8">
-                <div className="glass rounded-xl p-8 border border-border space-y-6">
-                    <div className="flex items-center gap-2 text-primary opacity-70 mb-4">
-                        <FileText className="h-4 w-4" />
-                        <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-foreground">Report Details</h3>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Valuation Company Name</label>
-                        <input
-                            type="text"
-                            name="valuer_company"
-                            required
-                            value={formData.valuer_company}
-                            onChange={handleChange}
-                            placeholder="e.g. Aurum Valuations Ltd"
-                            className="w-full bg-input border border-border rounded-lg py-2.5 px-4 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                    </div>
+                <div className="glass p-8 rounded-2xl border border-border space-y-6">
+                    <h2 className="text-foreground font-bold text-sm uppercase tracking-wider mb-6 flex items-center gap-2">
+                        Valuation Details
+                    </h2>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <TrendingUp className="h-3 w-3" /> Market Value (KES)
-                            </label>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Market Value (KES) <span className="text-red-500">*</span></label>
                             <input
                                 type="number"
                                 name="market_value"
                                 required
+                                min="0"
+                                step="0.01"
+                                className="w-full bg-input border border-border rounded-xl px-4 py-3 text-foreground font-mono"
                                 value={formData.market_value}
                                 onChange={handleChange}
-                                className="w-full bg-input border border-border rounded-lg py-3 px-4 text-foreground font-bold text-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                                placeholder="e.g 1500000"
                             />
                         </div>
-                        <div>
-                            <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <TrendingDown className="h-3 w-3" /> Forced Sale Value (KES)
-                            </label>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-amber-500/70 uppercase tracking-widest">Forced Sale Value (KES) <span className="text-red-500">*</span></label>
                             <input
                                 type="number"
                                 name="forced_sale_value"
                                 required
+                                min="0"
+                                step="0.01"
+                                className="w-full bg-input border border-border rounded-xl px-4 py-3 text-foreground font-mono"
                                 value={formData.forced_sale_value}
                                 onChange={handleChange}
-                                className="w-full bg-input border border-border rounded-lg py-3 px-4 text-amber-500 font-bold text-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                placeholder="e.g 1000000"
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Date of Valuation <span className="text-red-500">*</span></label>
+                            <input
+                                type="date"
+                                name="valuation_date"
+                                required
+                                className="w-full bg-input border border-border rounded-xl px-4 py-3 text-foreground"
+                                value={formData.valuation_date}
+                                onChange={handleChange}
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Accredited Valuer</label>
+                            <select
+                                name="valuer"
+                                className="w-full bg-input border border-border rounded-xl px-4 py-3 text-foreground"
+                                value={formData.valuer}
+                                onChange={handleChange}
+                            >
+                                <option value="">Select a Valuer...</option>
+                                {valuers.map(v => (
+                                    <option key={v.id} value={v.id}>{v.name} ({v.registration_number})</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="col-span-1 md:col-span-2 space-y-2">
+                            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Upload Report Document</label>
+                            <div className="relative group cursor-pointer">
+                                <input
+                                    type="file"
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                    onChange={handleFileChange}
+                                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                />
+                                <div className={`flex items-center justify-center gap-3 p-6 border-2 border-dashed rounded-xl transition-all ${reportFile ? 'border-primary/50 bg-primary/5' : 'border-border hover:border-primary/30 hover:bg-muted/50'
+                                    }`}>
+                                    <Upload className={`h-6 w-6 ${reportFile ? 'text-primary' : 'text-muted-foreground'}`} />
+                                    <div>
+                                        <p className="text-foreground font-bold text-sm">
+                                            {reportFile ? reportFile.name : 'Click to upload valuation report'}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-1">PDF, Document, or Image files</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="col-span-1 md:col-span-2 space-y-2">
+                            <label className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Notes / Conditions</label>
+                            <textarea
+                                name="notes"
+                                rows={3}
+                                className="w-full bg-input border border-border rounded-xl px-4 py-3 text-foreground resize-none"
+                                value={formData.notes}
+                                onChange={handleChange}
+                                placeholder="Any specific conditions or observations mentioned in the report..."
                             />
                         </div>
                     </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
-                            <Calendar className="h-3 w-3" /> Valuation Date
-                        </label>
-                        <input
-                            type="date"
-                            name="valuation_date"
-                            required
-                            value={formData.valuation_date}
-                            onChange={handleChange}
-                            className="w-full bg-input border border-border rounded-lg py-2.5 px-4 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Notes / Observations</label>
-                        <textarea
-                            name="notes"
-                            rows={3}
-                            value={formData.notes}
-                            onChange={handleChange}
-                            placeholder="Any key findings from the report..."
-                            className="w-full bg-input border border-border rounded-lg py-2.5 px-4 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                        />
-                    </div>
                 </div>
 
-                <div className="glass rounded-xl p-8 border border-border space-y-6">
-                    <div className="flex items-center gap-2 text-primary opacity-70 mb-4">
-                        <Upload className="h-4 w-4" />
-                        <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-foreground">Attachment</h3>
-                    </div>
-
-                    <div className="flex items-center justify-center w-full">
-                        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer bg-input border-border hover:bg-slate-900 transition-all group">
-                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                <Upload className="w-8 h-8 mb-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                                <p className="mb-2 text-sm text-muted-foreground">
-                                    <span className="font-semibold">{reportFile ? reportFile.name : 'Upload Official Report PDF'}</span>
-                                </p>
-                                <p className="text-xs text-slate-600">PDF, PNG, JPG (MAX. 10MB)</p>
-                            </div>
-                            <input type="file" className="hidden" onChange={handleFileChange} accept=".pdf,.png,.jpg,.jpeg" />
-                        </label>
-                    </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-4 p-6 glass rounded-xl border border-border">
-                    <button
-                        type="button"
-                        onClick={() => router.back()}
-                        className="px-6 py-2.5 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                        Cancel
-                    </button>
+                <div className="flex justify-end pt-4">
                     <button
                         type="submit"
                         disabled={isSubmitting}
-                        className="flex items-center gap-2 px-10 py-2.5 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all disabled:opacity-50"
+                        className="flex items-center gap-2 px-8 py-3 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90 transition-all disabled:opacity-50"
                     >
-                        <Save className="h-4 w-4" />
-                        {isSubmitting ? 'Submitting...' : 'Submit & Update Asset'}
+                        {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
+                        {isSubmitting ? 'Saving Report...' : 'Save Valuation Report'}
                     </button>
                 </div>
             </form>

@@ -30,7 +30,7 @@ export default function LoanCommentsSection({ loanId }: LoanCommentsSectionProps
 
     const fetchComments = async () => {
         try {
-            const response = await api.get(`/loans/loans/${loanId}/comments/`);
+            const response = await api.get(`/loans/${loanId}/comments/`);
             setComments(response.data);
         } catch (error) {
             console.error('Failed to fetch comments:', error);
@@ -45,7 +45,7 @@ export default function LoanCommentsSection({ loanId }: LoanCommentsSectionProps
 
         setIsSubmitting(true);
         try {
-            await api.post(`/loans/loans/${loanId}/comments/`, {
+            await api.post(`/loans/${loanId}/comments/`, {
                 comment: newComment,
                 comment_type: 'general',
                 is_internal: true,
@@ -147,7 +147,7 @@ export default function LoanCommentsSection({ loanId }: LoanCommentsSectionProps
                                         </span>
                                     )}
                                 </div>
-                                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed break-words overflow-hidden">
                                     {comment.comment}
                                 </p>
                             </div>

@@ -87,7 +87,7 @@ export default function LoanApplicationForm({
     // Fetch active loans for selected borrower
     const fetchEligibleLoans = async (borrowerId: string) => {
         try {
-            const response = await api.get(`/loans/loans/?borrower=${borrowerId}&status=active`);
+            const response = await api.get(`/loans/?borrower=${borrowerId}&status=active`);
             const loans = response.data.results || response.data;
             // Filter out already refinanced loans
             setEligibleLoans(loans.filter((l: any) => !l.is_refinanced));

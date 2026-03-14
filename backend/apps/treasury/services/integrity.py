@@ -320,3 +320,40 @@ def sync_treasury_coa_balance(cash_account):
         )
         coa.balance = cash_account.current_balance
         coa.save(update_fields=['balance'])
+
+
+def post_manual_treasury_transaction(transaction_instance):
+    """
+    Creates double-entry GL postings for manual treasury transactions.
+    This is used when a user manually Adds or Withdraws money via the Treasury UI.
+    """
+    if not transaction_instance.counterparty_coa:
+        return
+
+    from apps.accounting.services import create_double_entry
+    
+    cash_coa = transaction_instance.account.coa_account
+    if not cash_coa:
+        logger.warning(f"Manual transaction {transaction_instance.id} skipped GL posting: CashAccount {transaction_instance.account.name} has no linked COA.")
+        return
+
+    description = transaction_instance.description or f"Treasury {transaction_instance.get_transaction_type_display()}: {transaction_instance.get_category_display()}"
+    
+    if transaction_instance.transaction_type == TreasuryTransaction.TransactionType.CREDIT:
+        # Money In: Debit Cash (Asset Up) / Credit Counterparty (Liability/Equity Up or Income Up)
+        debits = [(cash_coa.code, transaction_instance.amount)]
+        credits = [(transaction_instance.counterparty_coa.code, transaction_instance.amount)]
+    else:
+        # Money Out: Debit Counterparty (Asset Down or Expense Up) / Credit Cash (Asset Down)
+        debits = [(transaction_instance.counterparty_coa.code, transaction_instance.amount)]
+        credits = [(cash_coa.code, transaction_instance.amount)]
+
+    create_double_entry(
+        date=transaction_instance.created_at.date() if transaction_instance.created_at else timezone.now().date(),
+        description=description,
+        reference=transaction_instance.reference or f"TRX-{str(transaction_instance.id)[:8].upper()}",
+        debits=debits,
+        credits=credits,
+        organization=transaction_instance.organization
+    )
+

@@ -175,11 +175,33 @@ export default function BalanceSheet() {
                                 {expandedSections['assets'] && (
                                     <div className="p-0">
                                         {(data?.assets?.details ?? []).map((account: any, idx: number) => (
-                                            <div key={idx} className="flex items-center justify-between p-4 border-b border-border/50 last:border-0 hover:bg-white/5 transition-colors">
-                                                <span className="text-sm text-foreground">{account.name}</span>
-                                                <span className="text-sm font-medium text-foreground">{formatCurrency(account.balance)}</span>
+                                            <div
+                                                key={idx}
+                                                className={`flex items-center justify-between p-4 border-b border-border/50 last:border-0 transition-colors ${account.is_parent ? 'bg-white/5 font-bold' : 'hover:bg-white/5 cursor-pointer group'}`}
+                                                style={{ paddingLeft: `${(account.level + 1) * 1}rem` }}
+                                                onClick={() => {
+                                                    if (!account.is_parent && account.id) {
+                                                        if (account.id === 'REPORT_PL') {
+                                                            router.push(`/accounting/reports/profit-loss?start_date=${account.start_date}&end_date=${account.end_date}`);
+                                                        } else {
+                                                            router.push(`/accounting/reports/general-ledger?account_id=${account.id}&end_date=${date}`);
+                                                        }
+                                                    }
+                                                }}
+
+                                            >
+                                                <div className="flex flex-col">
+                                                    <span className={`text-sm transition-colors ${account.is_parent ? 'text-foreground' : 'text-foreground group-hover:text-primary'}`}>
+                                                        {account.name}
+                                                    </span>
+                                                    {account.is_parent && <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Category</span>}
+                                                </div>
+                                                <span className={`text-sm text-foreground ${account.is_parent ? 'font-bold' : 'font-medium'}`}>
+                                                    {formatCurrency(account.balance)}
+                                                </span>
                                             </div>
                                         ))}
+
                                         {(data?.assets?.details ?? []).length === 0 && (
                                             <div className="p-8 text-center text-muted-foreground text-sm">No assets recorded.</div>
                                         )}
@@ -205,11 +227,33 @@ export default function BalanceSheet() {
                                 {expandedSections['liabilities'] && (
                                     <div className="p-0">
                                         {(data?.liabilities?.details ?? []).map((account: any, idx: number) => (
-                                            <div key={idx} className="flex items-center justify-between p-4 border-b border-border/50 last:border-0 hover:bg-white/5 transition-colors">
-                                                <span className="text-sm text-foreground">{account.name}</span>
-                                                <span className="text-sm font-medium text-foreground">{formatCurrency(account.balance)}</span>
+                                            <div
+                                                key={idx}
+                                                className={`flex items-center justify-between p-4 border-b border-border/50 last:border-0 transition-colors ${account.is_parent ? 'bg-white/5 font-bold' : 'hover:bg-white/5 cursor-pointer group'}`}
+                                                style={{ paddingLeft: `${(account.level + 1) * 1}rem` }}
+                                                onClick={() => {
+                                                    if (!account.is_parent && account.id) {
+                                                        if (account.id === 'REPORT_PL') {
+                                                            router.push(`/accounting/reports/profit-loss?start_date=${account.start_date}&end_date=${account.end_date}`);
+                                                        } else {
+                                                            router.push(`/accounting/reports/general-ledger?account_id=${account.id}&end_date=${date}`);
+                                                        }
+                                                    }
+                                                }}
+
+                                            >
+                                                <div className="flex flex-col">
+                                                    <span className={`text-sm transition-colors ${account.is_parent ? 'text-foreground' : 'text-foreground group-hover:text-primary'}`}>
+                                                        {account.name}
+                                                    </span>
+                                                    {account.is_parent && <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Category</span>}
+                                                </div>
+                                                <span className={`text-sm text-foreground ${account.is_parent ? 'font-bold' : 'font-medium'}`}>
+                                                    {formatCurrency(account.balance)}
+                                                </span>
                                             </div>
                                         ))}
+
                                         {(data?.liabilities?.details ?? []).length === 0 && (
                                             <div className="p-8 text-center text-muted-foreground text-sm">No liabilities recorded.</div>
                                         )}
@@ -232,17 +276,40 @@ export default function BalanceSheet() {
                                 {expandedSections['equity'] && (
                                     <div className="p-0">
                                         {(data?.equity?.details ?? []).map((account: any, idx: number) => (
-                                            <div key={idx} className="flex items-center justify-between p-4 border-b border-border/50 last:border-0 hover:bg-white/5 transition-colors">
-                                                <span className="text-sm text-foreground">{account.name}</span>
-                                                <span className="text-sm font-medium text-foreground">{formatCurrency(account.balance)}</span>
+                                            <div
+                                                key={idx}
+                                                className={`flex items-center justify-between p-4 border-b border-border/50 last:border-0 transition-colors ${account.is_parent ? 'bg-white/5 font-bold' : 'hover:bg-white/5 cursor-pointer group'}`}
+                                                style={{ paddingLeft: `${(account.level + 1) * 1}rem` }}
+                                                onClick={() => {
+                                                    if (!account.is_parent && account.id) {
+                                                        if (account.id === 'REPORT_PL') {
+                                                            router.push(`/accounting/reports/profit-loss?start_date=${account.start_date}&end_date=${account.end_date}`);
+                                                        } else {
+                                                            router.push(`/accounting/reports/general-ledger?account_id=${account.id}&end_date=${date}`);
+                                                        }
+                                                    }
+                                                }}
+
+                                            >
+                                                <div className="flex flex-col">
+                                                    <span className={`text-sm transition-colors ${account.is_parent ? 'text-foreground' : 'text-foreground group-hover:text-primary'}`}>
+                                                        {account.name}
+                                                    </span>
+                                                    {account.is_parent && <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Category</span>}
+                                                </div>
+                                                <span className={`text-sm text-foreground ${account.is_parent ? 'font-bold' : 'font-medium'}`}>
+                                                    {formatCurrency(account.balance)}
+                                                </span>
                                             </div>
                                         ))}
+
                                         {(data?.equity?.details ?? []).length === 0 && (
                                             <div className="p-8 text-center text-muted-foreground text-sm">No equity recorded.</div>
                                         )}
                                     </div>
                                 )}
                             </div>
+
 
                             {/* Verification Total */}
                             <div className="rounded-xl p-4 bg-muted/50 border border-border flex items-center justify-between">

@@ -306,7 +306,17 @@ class LoanSerializer(serializers.ModelSerializer):
         }
 
     def get_collateral_items(self, obj):
-        return CollateralSerializer(obj.collaterals.all(), many=True).data
+        items = []
+        if obj.collateral:
+            items.append(obj.collateral)
+        
+        # Add M2M collaterals, excluding duplicates
+        m2m_items = obj.collaterals.all()
+        for item in m2m_items:
+            if item not in items:
+                items.append(item)
+                
+        return CollateralSerializer(items, many=True).data
 
     def get_application_details(self, obj):
         if not obj.application:
@@ -375,6 +385,15 @@ class LoanRepaymentCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(f"Chart of Account code '{value}' does not exist.")
         return value
 
+
+class LoanRestructureSerializer(serializers.Serializer):
+    new_term = serializers.IntegerField(min_value=1)
+    new_interest_rate = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=0)
+    new_frequency = serializers.ChoiceField(choices=LoanProduct.RepaymentFrequency.choices)
+    capitalize_arrears = serializers.BooleanField(default=False)
+    waive_penalties = serializers.BooleanField(default=False)
+    waive_interest = serializers.BooleanField(default=False)
+    notes = serializers.CharField(required=False, allow_blank=True)
 
 
 

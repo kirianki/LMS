@@ -9,12 +9,27 @@ import {
     ChevronLeft,
     Search
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import api from '@/lib/api';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 
-export default function GeneralLedger() {
+import { Suspense } from 'react';
+
+export default function GeneralLedgerPage() {
+    return (
+        <Suspense fallback={
+            <div className="h-64 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+        }>
+            <GeneralLedger />
+        </Suspense>
+    );
+}
+
+function GeneralLedger() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<any>(null);
     const [accounts, setAccounts] = useState<any[]>([]);
@@ -27,9 +42,35 @@ export default function GeneralLedger() {
     useEffect(() => {
         // Fetch accounts for dropdown
         api.get('/accounting/accounts/').then(res => {
-            setAccounts(res.data.results || res.data);
+            const accs = res.data.results || res.data;
+            setAccounts(accs);
+
+            // Handle incoming drill-down parameters
+            const accId = searchParams.get('account_id');
+            const startDate = searchParams.get('start_date');
+            const endDate = searchParams.get('end_date');
+
+            if (accId) {
+                setSelectedAccount(accId);
+                if (startDate || endDate) {
+                    setDateRange({
+                        start: startDate || format(startOfMonth(parseISO(endDate!)), 'yyyy-MM-dd'),
+                        end: endDate || format(new Date(), 'yyyy-MM-dd')
+                    });
+                }
+            }
         }).catch(err => console.error(err));
-    }, []);
+    }, [searchParams]);
+
+    // Trigger fetch when selectedAccount or dateRange changes ONLY if they were set from query params
+    useEffect(() => {
+        if (selectedAccount && accounts.length > 0) {
+            const accId = searchParams.get('account_id');
+            if (accId === selectedAccount) {
+                fetchReport();
+            }
+        }
+    }, [selectedAccount, accounts]);
 
     const fetchReport = async () => {
         if (!selectedAccount) return;

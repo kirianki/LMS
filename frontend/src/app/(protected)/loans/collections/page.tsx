@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, PhoneCall, MessageSquare, Users, Calendar, TrendingDown, CheckCircle2, Clock } from 'lucide-react';
+import { AlertCircle, PhoneCall, MessageSquare, Users, Calendar, TrendingDown, CheckCircle2, Clock, Download, FileText } from 'lucide-react';
 import DataTable from '@/components/ui/DataTable';
 import api from '@/lib/api';
 import Link from 'next/link';
@@ -105,6 +105,26 @@ export default function CollectionsPage() {
             setError(error.response?.data?.detail || error.message || 'Failed to load collection data');
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleExport = async (type: 'pdf' | 'word') => {
+        try {
+            const response = await api.get('/loans/arrears_reports/export/', {
+                params: { export_type: type === 'word' ? 'docx' : 'pdf' },
+                responseType: 'blob'
+            });
+
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            const extension = type === 'word' ? 'docx' : 'pdf';
+            link.setAttribute('download', `Arrears_Report_${new Date().toISOString().split('T')[0]}.${extension}`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (error) {
+            console.error(`Error exporting ${type}:`, error);
         }
     };
 
@@ -283,6 +303,24 @@ export default function CollectionsPage() {
                         Collections & Arrears
                     </h1>
                     <p className="text-muted-foreground mt-1">Manage overdue loans and recovery activities</p>
+                </div>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => handleExport('pdf')}
+                        className="px-4 py-2 glass border border-border rounded-xl flex items-center gap-2 hover:bg-white/5 transition-colors disabled:opacity-50"
+                        disabled={isLoading}
+                    >
+                        <Download className="h-4 w-4" />
+                        Export PDF
+                    </button>
+                    <button
+                        onClick={() => handleExport('word')}
+                        className="px-4 py-2 glass border border-border rounded-xl flex items-center gap-2 hover:bg-white/5 transition-colors disabled:opacity-50"
+                        disabled={isLoading}
+                    >
+                        <FileText className="h-4 w-4" />
+                        Export Word
+                    </button>
                 </div>
             </div>
 

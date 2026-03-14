@@ -42,76 +42,98 @@ def generate_trial_balance(date=None, organization=None):
 
 def generate_balance_sheet(date=None, organization=None):
     """Generate Balance Sheet: Assets = Liabilities + Equity."""
+    if isinstance(date, str):
+        date = datetime.datetime.strptime(date, '%Y-%m-%d').date()
+    report_date = date or datetime.date.today()
     
-    def get_account_balance(account, depth=0):
-        """Recursively calculate balance for an account and its children.
-        Only leaf accounts hold balances; parent accounts act as headers."""
+    def get_account_balance_as_of(account, as_of_date):
+        """Calculate historical balance for an account as of a specific date."""
+        entries = LedgerEntry.objects.filter(account=account, is_posted=True, journal_entry__date__lte=as_of_date)
+        debits = entries.filter(entry_type='debit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+        credits = entries.filter(entry_type='credit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+        
+        if account.account_type in ['asset', 'expense']:
+            return debits - credits
+        else:
+            return credits - debits
+
+    def get_aggregated_balance(account, as_of_date, depth=0):
+        """Recursively calculate aggregated balance (self + children) as of a date."""
         if depth > 10:
-            logger.warning(f"Max depth reached for account balance aggregation at {account.code}")
             return Decimal('0.00')
         
-        children = list(account.children.filter(is_active=True))
-        children = list(account.children.filter(is_active=True))
-        # Sum children balances recursively
         total = Decimal('0.00')
-        for child in children:
-            total += get_account_balance(child, depth + 1)
+        for child in account.children.filter(is_active=True):
+            total += get_aggregated_balance(child, as_of_date, depth + 1)
             
-        # Add this account's own balance (allows direct posting to headers if needed)
-        return total + account.balance
+        return total + get_account_balance_as_of(account, as_of_date)
 
     def get_category_data(acc_type):
         org_filter = {'organization': organization} if organization else {}
-        
-        # Get all leaf accounts of this type with non-zero balances
-        # and all potential parent accounts
         all_accounts = ChartOfAccount.objects.filter(
             account_type=acc_type, is_active=True, **org_filter
         )
         
         details = []
-        total = Decimal('0.00')
         
-        for acc in all_accounts:
-            # For the details list, we only show the direct balance of the account
-            # to avoid double counting in the UI list.
-            if acc.balance != 0:
-                details.append({'name': f"{acc.code} - {acc.name}", 'balance': acc.balance})
+        def walk_tree(parent=None, level=0):
+            roots = all_accounts.filter(parent=parent).order_by('code')
+            level_total = Decimal('0.00')
+            for acc in roots:
+                balance = get_aggregated_balance(acc, report_date)
+                if balance != 0:
+                    details.append({
+                        'id': str(acc.id),
+                        'code': acc.code,
+                        'name': acc.name,
+                        'balance': balance,
+                        'level': level,
+                        'is_parent': acc.children.filter(is_active=True).exists()
+                    })
+                    walk_tree(acc, level + 1)
+                    if not parent:
+                        level_total += balance
+            return level_total
 
-        # The total must be the aggregate of all roots
-        total = Decimal('0.00')
-        roots = all_accounts.filter(parent__isnull=True)
-        for root in roots:
-            total += get_account_balance(root)
-                
-        return total, details
-                
-        return total, details
+        grand_total = walk_tree()
+        return grand_total, details
 
     assets_total, assets_list = get_category_data('asset')
     liabilities_total, liabilities_list = get_category_data('liability')
     equity_total, equity_list = get_category_data('equity')
 
-    # Add Net Profit (Current Year) to Equity
-    # This is essential for the balance sheet to balance before year-end closing
+    # Add Net Profit (Current Fiscal Year) to Equity
     from .reports import generate_profit_loss
+    # Net profit should be from start of the year of the report date
+    fy_start = report_date.replace(month=1, day=1)
     pl_data = generate_profit_loss(
-        start_date=datetime.date(datetime.date.today().year, 1, 1),
-        end_date=date or datetime.date.today(),
+        start_date=fy_start,
+        end_date=report_date,
         organization=organization
     )
     net_profit = pl_data['net_profit']
     
     if net_profit != 0:
-        equity_list.append({'name': 'Net Profit (Current Period)', 'balance': net_profit})
+        equity_list.append({
+            'id': 'REPORT_PL',
+            'code': 'NET_PROFIT',
+            'name': 'Net Profit (Current Period)', 
+            'balance': net_profit,
+            'level': 0,
+            'is_parent': False,
+            'start_date': fy_start.strftime('%Y-%m-%d'),
+            'end_date': report_date.strftime('%Y-%m-%d')
+        })
         equity_total += net_profit
 
     return {
+        'date': report_date.strftime('%Y-%m-%d'),
         'assets': {'total': assets_total, 'details': assets_list},
         'liabilities': {'total': liabilities_total, 'details': liabilities_list},
         'equity': {'total': equity_total, 'details': equity_list},
         'is_balanced': assets_total == (liabilities_total + equity_total)
     }
+
 
 def generate_profit_loss(start_date, end_date, organization=None):
     """Generate Profit & Loss: Income - Expenses."""

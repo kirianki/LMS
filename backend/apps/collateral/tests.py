@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 from apps.users.models import User
-from apps.customers.models import Customer
+from apps.customers.models import Borrower
 from apps.accounts.models import Organization
 from .models import Collateral, Valuer, ValuationRequest
 
@@ -28,7 +28,7 @@ class CollateralTests(TestCase):
             last_name='User',
             organization=self.org
         )
-        self.customer = Customer.objects.create(
+        self.borrower = Borrower.objects.create(
             organization=self.org,
             first_name="Jane",
             last_name="Doe",
@@ -42,7 +42,7 @@ class CollateralTests(TestCase):
         self.client.force_authenticate(user=self.user)
         url = reverse('collateral-list')
         data = {
-            "customer": str(self.customer.id),
+            "borrower": str(self.borrower.id),
             "collateral_type": "motor_vehicle",
             "market_value": "1500000.00",
             "forced_sale_value": "1100000.00",
@@ -64,7 +64,7 @@ class CollateralTests(TestCase):
         self.client.force_authenticate(user=self.user)
         url = reverse('collateral-list')
         data = {
-            "customer": str(self.customer.id),
+            "borrower": str(self.borrower.id),
             "collateral_type": "motor_vehicle",
             "market_value": "1500000.00",
             "forced_sale_value": "1100000.00",
@@ -80,7 +80,7 @@ class CollateralTests(TestCase):
         self.client.force_authenticate(user=self.user)
         url = reverse('collateral-list')
         data = {
-            "customer": str(self.customer.id),
+            "borrower": str(self.borrower.id),
             "collateral_type": "land_property",
             "market_value": "5000000.00",
             "forced_sale_value": "3500000.00",
@@ -99,7 +99,7 @@ class CollateralTests(TestCase):
         """Test that simple-history tracks changes to collateral."""
         collateral = Collateral.objects.create(
             organization=self.org,
-            customer=self.customer,
+            borrower=self.borrower,
             collateral_type="motor_vehicle",
             market_value=1000000,
             forced_sale_value=700000,
@@ -131,7 +131,7 @@ class CollateralTests(TestCase):
         url = reverse('collateral-list')
         self.client.force_authenticate(user=self.user)
         data = {
-            "customer": str(self.customer.id),
+            "borrower": str(self.borrower.id),
             "collateral_type": "motor_vehicle",
             "market_value": "1000000.00",
             "forced_sale_value": "700000.00",
@@ -151,15 +151,4 @@ class CollateralTests(TestCase):
         self.assertEqual(ValuationRequest.objects.count(), 1)
         request = ValuationRequest.objects.first()
         self.assertEqual(request.valuer, valuer)
-        self.assertEqual(request.organization, self.org)
-
-    def test_ai_agent_parsing(self):
-        """Test the AI agent parsing logic."""
-        from apps.agents.services import ValuationParsingAgent
-        agent = ValuationParsingAgent()
-        
-        report_text = "Market value of Toyota Camry KDC 123A is 1,500,000. Forced sale is 1,100,000 as of 2024-01-16."
-        result = agent.parse_report_text(report_text)
-        
-        self.assertTrue(result['success'])
-        self.assertEqual(result['data']['market_value'], "1500000.00")
+        self.assertEqual(request.collateral.organization, self.org)

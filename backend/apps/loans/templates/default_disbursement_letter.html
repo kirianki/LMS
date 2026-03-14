@@ -25,39 +25,46 @@
         }
 
         .primary-text {
-            color: {{ primary_color }};
+            color: #2EAD8F;
         }
 
         .secondary-text {
-            color: {{ secondary_color }};
+            color: #64748b;
         }
 
         .letterhead {
-            width: 100%;
-            border-bottom: 2pt solid {{ primary_color }};
+            width: 17cm;
+            border-bottom: 2pt solid #2EAD8F;
             padding-bottom: 15pt;
             margin-bottom: 20pt;
         }
 
+
+
+
+
+
         .logo-box {
-            width: 50%;
+            width: 8.5cm;
             vertical-align: top;
         }
 
         .company-info {
-            width: 50%;
+            width: 8.5cm;
             text-align: right;
             font-size: 8pt;
             color: #64748b;
             line-height: 1.3;
         }
 
+
         .summary-table {
-            width: 100%;
+            width: 17cm;
             margin: 20pt 0;
             border: 0.5pt solid #e2e8f0;
             border-collapse: collapse;
         }
+
 
         .summary-table td {
             padding: 10pt;
@@ -67,9 +74,10 @@
         .label {
             font-weight: bold;
             background: #f8fafc;
-            width: 35%;
+            width: 6cm;
             color: #475569;
         }
+
 
         .value {
             color: #0f172a;
@@ -99,14 +107,16 @@
         }
 
         .signature-section {
-            width: 100%;
+            width: 17cm;
             margin-top: 40pt;
         }
 
+
         .sig-box {
-            width: 48%;
+            width: 8.5cm;
             vertical-align: top;
         }
+
 
         #footer_content {
             font-size: 7pt;
@@ -145,74 +155,102 @@
             <p style="margin: 0;"><strong>DATE:</strong> {{ letter_date }}</p>
             <p style="margin: 0;"><strong>REF NO:</strong> {{ loan_ref }}</p>
         </div>
-        <h1 style="text-align: center; color: {{ primary_color }}; font-size: 16pt; margin-bottom: 30pt;">DISBURSEMENT
+        <h1 style="text-align: center; color: {{ primary_color }}; font-size: 16pt; margin-bottom: 20pt;">DISBURSEMENT
             CHECKLIST</h1>
         <p>Dear <strong>{{ borrower_name }}</strong>,</p>
         <p>This serves to confirm that your loan application has been fully processed and approved for disbursement.</p>
-        <h2>1. DISBURSEMENT SUMMARY</h2>
-        <table class="summary-table">
+
+        <table style="width: 100%;">
             <tr>
-                <td class="label">Approved Net Amount</td>
-                <td class="value primary-text">KES {{ net_amount }}</td>
-            </tr>
-            <tr>
-                <td class="label">Disbursement Date</td>
-                <td class="value">{{ disb_date }}</td>
+                <td style="width: 48%; vertical-align: top;">
+                    <h2>1. DISBURSEMENT SUMMARY</h2>
+                    <table class="summary-table">
+                        <tr>
+                            <td class="label">Approved Net Amount</td>
+                            <td class="value primary-text">KES {{ net_amount }}</td>
+                        </tr>
+                        <tr>
+                            <td class="label">Disbursement Date</td>
+                            <td class="value">{{ disb_date }}</td>
+                        </tr>
+                    </table>
+                </td>
+                <td style="width: 4%;">&nbsp;</td>
+                <td style="width: 48%; vertical-align: top;">
+                    <h2>2. REQUIRED DOCUMENTS</h2>
+                    <div style="font-size: 9pt; color: #475569;">
+                        <p style="margin: 2pt 0;">[ ] Original National ID Card</p>
+                        <p style="margin: 2pt 0;">[ ] KRA Pin Certificate Copy</p>
+                        <p style="margin: 2pt 0;">[ ] Signed Offer Letter</p>
+                        {% if has_collateral %}
+                        <p style="margin: 2pt 0;">[ ] Collateral Ownership Docs</p>
+                        {% endif %}
+                        <p style="margin: 2pt 0;">[ ] 3 Months Bank Statements</p>
+                    </div>
+                </td>
             </tr>
         </table>
-        <h2>2. PAYMENT CHANNEL CONFIRMATION</h2>
-        <p style="margin-bottom: 15pt; color: #475569; font-size: 9pt;">
-            <strong>Instructions:</strong> Please check (✓) your preferred payment method below and fill in the required
-            details.
+
+        <h2>3. PAYMENT CHANNEL CONFIRMATION</h2>
+        <p style="margin-bottom: 10pt; color: #475569; font-size: 9pt;">
+            <strong>Instructions:</strong> Please check (✓) your preferred payment method and fill in details.
         </p>
 
-        <div class="channel-box">
-            <p><strong>[ ] OPTION A: MOBILE MONEY (M-PESA)</strong></p>
-            <p style="margin-left: 20pt; font-size: 9pt; color: #475569;">
-                Phone Number: _________________________________<br>
-                Account Name: _________________________________
-            </p>
-        </div>
-
-        <div class="channel-box">
-            <p><strong>[ ] OPTION B: BANK TRANSFER</strong></p>
-            <p style="margin-left: 20pt; font-size: 9pt; color: #475569;">
-                Bank Name: _________________________________<br>
-                Branch: _________________________________<br>
-                Account Number: _________________________________<br>
-                Account Name: _________________________________
-            </p>
-        </div>
-
-        <div class="channel-box">
-            <p><strong>[ ] OPTION C: CASH PICKUP</strong></p>
-            <p style="margin-left: 20pt; font-size: 9pt; color: #475569;">
-                Pickup Location: _________________________________<br>
-                Preferred Date: _________________________________
-            </p>
-        </div>
-
-        <div class="channel-box">
-            <p><strong>[ ] OPTION D: CHEQUE</strong></p>
-            <p style="margin-left: 20pt; font-size: 9pt; color: #475569;">
-                Cheque Payable To: _________________________________<br>
-                Delivery Address: _________________________________
-            </p>
-        </div>
-        <pdf:nextpage />
-        <h2>3. EXECUTION</h2>
-        <table class="signature-section">
+        <table style="width: 100%;">
             <tr>
-                <td class="sig-box">
-                    <p>SIGNED BY THE BORROWER:</p>
-                    <p><strong>{{ borrower_name }}</strong></p>
+                <td style="width: 48%; vertical-align: top;">
+                    <div class="channel-box" style="margin-bottom: 5pt; padding: 5pt; font-size: 8.5pt;">
+                        <p style="margin: 0;"><strong>[ ] OPTION A: M-PESA</strong></p>
+                        <p style="margin: 2pt 0 0 10pt;">Phone: _________________________</p>
+                        <p style="margin: 2pt 0 0 10pt;">Name: _________________________</p>
+                    </div>
                 </td>
-                <td class="sig-box">
-                    <p>FOR THE LENDER:</p>
-                    <p><strong>{{ company_name }}</strong></p>
+                <td style="width: 4%;">&nbsp;</td>
+                <td style="width: 48%; vertical-align: top;">
+                    <div class="channel-box" style="margin-bottom: 5pt; padding: 5pt; font-size: 8.5pt;">
+                        <p style="margin: 0;"><strong>[ ] OPTION B: BANK TRANSFER</strong></p>
+                        <p style="margin: 2pt 0 0 10pt;">Bank: __________________________</p>
+                        <p style="margin: 2pt 0 0 10pt;">Acc No: ________________________</p>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td style="width: 48%; vertical-align: top;">
+                    <div class="channel-box" style="margin-bottom: 5pt; padding: 5pt; font-size: 8.5pt;">
+                        <p style="margin: 0;"><strong>[ ] OPTION C: CASH PICKUP</strong></p>
+                        <p style="margin: 2pt 0 0 10pt;">Location: ______________________</p>
+                        <p style="margin: 2pt 0 0 10pt;">Date: __________________________</p>
+                    </div>
+                </td>
+                <td style="width: 4%;">&nbsp;</td>
+                <td style="width: 48%; vertical-align: top;">
+                    <div class="channel-box" style="margin-bottom: 5pt; padding: 5pt; font-size: 8.5pt;">
+                        <p style="margin: 0;"><strong>[ ] OPTION D: CHEQUE</strong></p>
+                        <p style="margin: 2pt 0 0 10pt;">Payable To: _____________________</p>
+                        <p style="margin: 2pt 0 0 10pt;">Address: ________________________</p>
+                    </div>
                 </td>
             </tr>
         </table>
+
+        <div style="margin-top: 20pt;">
+            <h2>4. EXECUTION</h2>
+            <table class="signature-section" style="margin-top: 10pt;">
+                <tr>
+                    <td class="sig-box">
+                        <p style="font-size: 9pt;">SIGNED BY THE BORROWER:</p>
+                        <p style="margin-top: 15pt;">__________________________</p>
+                        <p><strong>{{ borrower_name }}</strong></p>
+                    </td>
+                    <td class="sig-box">
+                        <p style="font-size: 9pt;">FOR THE LENDER:</p>
+                        <p style="margin-top: 15pt;">__________________________</p>
+                        <p><strong>{{ company_name }}</strong></p>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
     </div>
 </body>
 

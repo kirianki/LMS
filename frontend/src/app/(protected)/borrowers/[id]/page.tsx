@@ -109,9 +109,9 @@ export default function BorrowerDetailPage() {
                 const [borrowerRes, savingsRes, collateralRes, applicationsRes, loansRes, historyRes, commRes] = await Promise.all([
                     api.get(`/customers/borrowers/${params.id}/`),
                     api.get(`/savings/accounts/?borrower=${params.id}`),
-                    api.get(`/collateral/collateral/?borrower=${params.id}`),
+                    api.get(`/collateral/?borrower=${params.id}`),
                     api.get(`/loans/applications/?borrower=${params.id}`),
-                    api.get(`/loans/loans/?borrower=${params.id}`),
+                    api.get(`/loans/?borrower=${params.id}`),
                     api.get(`/customers/borrowers/${params.id}/activity_feed/`),
                     api.get(`/notifications/logs/?related_borrower=${params.id}`)
                 ]);

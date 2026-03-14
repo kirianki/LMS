@@ -10,7 +10,8 @@ import {
     PieChart,
     CreditCard,
     ArrowDownCircle,
-    CheckCircle2
+    CheckCircle2,
+    FileText
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
@@ -42,13 +43,13 @@ export default function CollectionsReport() {
         }
     };
 
-    const handleExport = async () => {
+    const handleExport = async (type: 'pdf' | 'docx') => {
         try {
             const response = await api.get('/accounting/reports/collections/', {
                 params: {
                     start_date: dateRange.start,
                     end_date: dateRange.end,
-                    export_type: 'pdf'
+                    export_type: type
                 },
                 responseType: 'blob'
             });
@@ -56,12 +57,13 @@ export default function CollectionsReport() {
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', `Collections_${dateRange.start}_${dateRange.end}.pdf`);
+            const extension = type === 'docx' ? 'docx' : 'pdf';
+            link.setAttribute('download', `Collections_${dateRange.start}_${dateRange.end}.${extension}`);
             document.body.appendChild(link);
             link.click();
             link.remove();
         } catch (error) {
-            console.error('Error exporting PDF:', error);
+            console.error(`Error exporting ${type}:`, error);
         }
     };
 
@@ -111,11 +113,18 @@ export default function CollectionsReport() {
                     Apply Filters
                 </button>
                 <button
-                    onClick={handleExport}
+                    onClick={() => handleExport('pdf')}
                     className="px-4 py-2 glass border border-border rounded-lg flex items-center gap-2 hover:bg-white/5 transition-colors"
                 >
                     <Download className="h-4 w-4" />
                     Export PDF
+                </button>
+                <button
+                    onClick={() => handleExport('docx')}
+                    className="px-4 py-2 glass border border-border rounded-lg flex items-center gap-2 hover:bg-white/5 transition-colors"
+                >
+                    <FileText className="h-4 w-4" />
+                    Export Word
                 </button>
             </div>
 

@@ -44,7 +44,7 @@ export default function CollateralPage() {
     const fetchCollaterals = async (query = '') => {
         try {
             setIsLoading(true);
-            const response = await api.get(`/collateral/collateral/${query ? `?search=${query}` : ''}`);
+            const response = await api.get(`/collateral/${query ? `?search=${query}` : ''}`);
             const data = response?.data;
             const processedData = Array.isArray(data) ? data : data?.results || [];
             setCollaterals(processedData);

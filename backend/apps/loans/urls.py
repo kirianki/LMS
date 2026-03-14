@@ -8,6 +8,7 @@ from .views import (
     CollateralDischargeViewSet, LoanGuarantorViewSet,
     LoanDocumentViewSet,
     arrears_reports, dashboard_summary, collections_forecast_detail,
+    export_arrears_report,
     mpesa_c2b_validation, mpesa_c2b_confirmation,
     BulkLoanImportView
 )
@@ -15,7 +16,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r'products', LoanProductViewSet, basename='loanproduct')
 router.register(r'applications', LoanApplicationViewSet, basename='loanapplication')
-router.register(r'loans', LoanViewSet, basename='loan')
+router.register(r'', LoanViewSet, basename='loan')
 router.register(r'fees', LoanFeeViewSet, basename='loanfee')
 router.register(r'guarantors', LoanGuarantorViewSet, basename='loanguarantor')
 router.register(r'collection-cases', CollectionCaseViewSet)
@@ -28,6 +29,7 @@ router.register(r'documents', LoanDocumentViewSet, basename='loandocument')
 
 urlpatterns = [
     path('arrears_reports/', arrears_reports, name='arrears-reports'),
+    path('arrears_reports/export/', export_arrears_report, name='arrears-reports-export'),
     path('collections_forecast_detail/', collections_forecast_detail, name='collections-forecast-detail'),
     path('dashboard_summary/', dashboard_summary, name='dashboard-summary'),
     path('bulk-import/', BulkLoanImportView.as_view(), name='bulk-import'),

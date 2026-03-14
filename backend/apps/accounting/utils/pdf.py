@@ -543,3 +543,95 @@ def generate_staff_payslip_pdf(payroll, tenant):
               onLaterPages=lambda c, d: add_branded_footer(c, d, branding))
     buffer.seek(0)
     return buffer
+
+def generate_arrears_management_pdf(data, tenant):
+    """Generate Arrears Management Report PDF."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*cm, bottomMargin=1.5*cm)
+    styles = getSampleStyleSheet()
+    branding = get_tenant_branding(tenant)
+    elements = []
+
+    add_branded_header(elements, branding, styles, "COLLECTIONS & ARREARS MANAGEMENT REPORT")
+    elements.append(Paragraph(f"Report Date: {datetime.date.today().strftime('%B %d, %Y')}", styles['Normal']))
+    elements.append(Spacer(1, 0.3*inch))
+
+    # 1. PAR Metrics Section
+    elements.append(Paragraph("<b>Portfolio at Risk (PAR) Metrics</b>", styles['Heading3']))
+    par = data.get('par', {})
+    par_data = [
+        ["Metric", "Percentage", "Outstanding Amount"],
+        ["PAR 1+ Day", f"{par.get('par_1_plus_percent', 0):.2f}%", format_currency(par.get('par_1_plus_amount', 0))],
+        ["PAR 30+ Days", f"{par.get('par_30_plus_percent', 0):.2f}%", format_currency(par.get('par_30_plus_amount', 0))],
+        ["PAR 90+ Days", f"{par.get('par_90_plus_percent', 0):.2f}%", format_currency(par.get('par_90_plus_amount', 0))],
+    ]
+    t_par = Table(par_data, colWidths=[2.5*inch, 2*inch, 2.5*inch])
+    t_par.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), branding['primary_color']),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ALIGN', (1, 0), (2, -1), 'RIGHT'),
+        ('PADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(t_par)
+    elements.append(Spacer(1, 0.3*inch))
+
+    # 2. Arrears Aging Buckets
+    elements.append(Paragraph("<b>Arrears Aging Buckets</b>", styles['Heading3']))
+    aging = data.get('aging', {}).get('buckets', {})
+    aging_data = [["Bucket", "Loan Count", "Arrears Amount", "Portfolio Balance"]]
+    for bucket_name in ['current', '1-30', '31-60', '61-90', '90+']:
+        b = aging.get(bucket_name, {'count': 0, 'amount': 0, 'balance': 0})
+        aging_data.append([
+            bucket_name.title(),
+            str(b['count']),
+            format_currency(b['amount']),
+            format_currency(b['balance'])
+        ])
+    
+    t_aging = Table(aging_data, colWidths=[1.5*inch, 1.5*inch, 2*inch, 2.5*inch])
+    t_aging.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.whitesmoke),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+        ('PADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(t_aging)
+    elements.append(Spacer(1, 0.4*inch))
+
+    # 3. Active Cases Table
+    elements.append(Paragraph("<b>Detailed Collection Cases</b>", styles['Heading3']))
+    cases = data.get('cases', [])
+    if cases:
+        case_headers = [('loan_number', 'Loan #'), ('borrower_name', 'Borrower'), ('days_overdue', 'Days'), ('overdue_amount', 'Amount'), ('priority', 'Priority'), ('status_display', 'Status')]
+        case_table_data = [[h[1] for h in case_headers]]
+        for c in cases:
+            case_table_data.append([
+                Paragraph(str(c.get('loan_number', '')), styles['Normal']),
+                Paragraph(str(c.get('borrower_name', 'N/A')), styles['Normal']),
+                str(c.get('days_overdue', 0)),
+                format_currency(c.get('overdue_amount', 0)),
+                c.get('priority', '').upper(),
+                c.get('status_display', '').title()
+            ])
+        
+        t_cases = Table(case_table_data, colWidths=[1*inch, 2*inch, 0.7*inch, 1.5*inch, 1*inch, 1.3*inch])
+        t_cases.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), branding['primary_color']),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+        elements.append(t_cases)
+    else:
+        elements.append(Paragraph("No active collection cases found.", styles['Normal']))
+
+    doc.build(elements, onFirstPage=lambda c, d: add_branded_footer(c, d, branding),
+              onLaterPages=lambda c, d: add_branded_footer(c, d, branding))
+    buffer.seek(0)
+    return buffer
+

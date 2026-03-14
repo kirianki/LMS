@@ -22,12 +22,17 @@ def log_activity(instance, action, module, description, data=None):
     user = get_current_user()
     request = get_current_request()
     
-    # Don't log if no user is authenticated (unless it's a login event which we handle separately)
-    # Actually, for signals, user might be None in background tasks, we still want to log the event.
+    # Extract organization from instance if it exists
+    organization = getattr(instance, 'organization', None)
     
+    # If instance doesn't have organization, check related loan (e.g., for LoanRepayment)
+    if not organization and hasattr(instance, 'loan'):
+        organization = getattr(instance.loan, 'organization', None)
+
     ct = ContentType.objects.get_for_model(instance)
     
     ActivityLog.objects.create(
+        organization=organization,
         user=user if user and not user.is_anonymous else None,
         action=action,
         module=module,

@@ -14,21 +14,21 @@ def get_tenant_branding(tenant):
     """Get comprehensive tenant branding info from Organization."""
     # Default branding
     branding = {
-        'company_name': getattr(tenant, 'company_name', 'Financial Institution'),
-        'tagline': getattr(tenant, 'company_tagline', ''),
-        'address': getattr(tenant, 'company_address', 'P.O. Box 12345, Nairobi, Kenya'),
-        'postal_address': getattr(tenant, 'company_postal_address', ''),
-        'city': getattr(tenant, 'company_city', 'Nairobi'),
-        'country': getattr(tenant, 'company_country', 'Kenya'),
-        'phone': getattr(tenant, 'company_phone', '+254 700 000 000'),
-        'email': getattr(tenant, 'company_email', 'info@company.co.ke'),
-        'website': getattr(tenant, 'website', ''),
-        'registration_number': getattr(tenant, 'registration_number', ''),
-        'tax_id': getattr(tenant, 'tax_identification', ''),
+        'company_name': getattr(tenant, 'company_name', 'Aurum Finance') if tenant else 'Aurum Finance',
+        'tagline': getattr(tenant, 'company_tagline', '') if tenant else '',
+        'address': getattr(tenant, 'company_address', 'P.O. Box 12345, Nairobi, Kenya') if tenant else 'P.O. Box 12345, Nairobi, Kenya',
+        'postal_address': getattr(tenant, 'company_postal_address', '') if tenant else '',
+        'city': getattr(tenant, 'company_city', 'Nairobi') if tenant else 'Nairobi',
+        'country': getattr(tenant, 'company_country', 'Kenya') if tenant else 'Kenya',
+        'phone': getattr(tenant, 'company_phone', '+254 700 000 000') if tenant else '+254 700 000 000',
+        'email': getattr(tenant, 'company_email', 'info@aurum.co.ke') if tenant else 'info@aurum.co.ke',
+        'website': getattr(tenant, 'website', '') if tenant else '',
+        'registration_number': getattr(tenant, 'registration_number', '') if tenant else '',
+        'tax_id': getattr(tenant, 'tax_identification', '') if tenant else '',
         'logo_path': None,
         'primary_color': colors.HexColor('#2EAD8F'),
         'secondary_color': colors.HexColor('#3B82F6'),
-        'footer_text': getattr(tenant, 'report_footer_text', 'This is a computer-generated document. No signature is required.'),
+        'footer_text': getattr(tenant, 'report_footer_text', 'This is a computer-generated document. No signature is required.') if tenant else 'This is a computer-generated document. No signature is required.',
     }
     
     # Handle logo

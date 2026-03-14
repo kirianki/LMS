@@ -9,10 +9,34 @@ class CollateralSerializer(serializers.ModelSerializer):
             return obj.borrower.business_name
         return f"{obj.borrower.first_name} {obj.borrower.last_name}"
     valuer_name = serializers.ReadOnlyField(source='valuer.name')
+    valuation_history = serializers.SerializerMethodField()
+    linked_loans = serializers.SerializerMethodField()
     
     class Meta:
         model = Collateral
         fields = '__all__'
+
+    def get_valuation_history(self, obj):
+        reports = obj.valuation_reports.all().order_by('-valuation_date')
+        return ValuationReportSerializer(reports, many=True).data
+
+    def get_linked_loans(self, obj):
+        from apps.loans.models import Loan
+        from django.db.models import Q
+        loans = Loan.objects.filter(
+            Q(collateral=obj) | Q(collaterals=obj)
+        ).distinct()
+        active_loans = loans.filter(status__in=[
+            Loan.Status.ACTIVE, Loan.Status.DEFAULTED
+        ])
+        
+        return [{
+            'id': l.id,
+            'loan_number': l.loan_number,
+            'amount': l.principal_amount,
+            'status': l.status,
+            'balance': getattr(l, 'outstanding_balance', 0)
+        } for l in active_loans]
 
     def validate(self, data):
         """

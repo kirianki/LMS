@@ -35,7 +35,7 @@ from .serializers import (
     CollectionCaseSerializer, CollectionNoteSerializer,
     PromiseToPaySerializer, RecoveryActionSerializer,
     CollateralDischargeSerializer, LoanGuarantorSerializer, LoanCommentSerializer,
-    BulkLoanImportSerializer, LoanDocumentSerializer
+    BulkLoanImportSerializer, LoanDocumentSerializer, LoanRestructureSerializer
 )
 from .services import (
     calculate_interest, calculate_processing_fee,
@@ -179,6 +179,30 @@ class LoanApplicationViewSet(TenantScopedViewSet):
         if application.collateral:
             all_collaterals.append(application.collateral)
         all_collaterals.extend(application.collaterals.all())
+        
+        # Verify LTV and Total FSV requirements
+        if all_collaterals:
+            total_fsv = sum((c.forced_sale_value or 0) for c in all_collaterals)
+            
+            # Minimum value check
+            if product.min_collateral_value and total_fsv < product.min_collateral_value:
+                return Response(
+                    {'error': f'Combined collateral FSV (KES {total_fsv:,.2f}) is below the product minimum of KES {product.min_collateral_value:,.2f}.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            # LTV check
+            if product.max_ltv_ratio and product.max_ltv_ratio > 0:
+                approved_amount = Decimal(serializer.validated_data.get('approved_amount', 0))
+                if total_fsv == 0:
+                    return Response({'error': 'Total Collateral FSV is 0, cannot calculate LTV ratio for this approval.'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                calculated_ltv = (approved_amount / total_fsv) * 100
+                if calculated_ltv > product.max_ltv_ratio:
+                    return Response(
+                        {'error': f'Approval results in an LTV of {calculated_ltv:.2f}%, exceeding the product maximum of {product.max_ltv_ratio:.2f}%.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
         
         for coll in all_collaterals:
             if coll.collateral_type in ['motor_vehicle', 'chattels']:
@@ -771,7 +795,17 @@ class LoanApplicationViewSet(TenantScopedViewSet):
             
             # 1.3 Sync Many-to-Many Collaterals
             if application.collaterals.exists():
-                loan.collaterals.set(application.collaterals.all())
+                collaterals = application.collaterals.all()
+                loan.collaterals.set(collaterals)
+                # Auto-pledge all M2M collaterals
+                from apps.collateral.models import Collateral
+                collaterals.update(status=Collateral.CollateralStatus.PLEDGED)
+
+            # Auto-pledge primary collateral if it exists
+            if application.collateral:
+                from apps.collateral.models import Collateral
+                application.collateral.status = Collateral.CollateralStatus.PLEDGED
+                application.collateral.save()
 
             # 1.5 Create LoanFee records from application deductions
             for deduction in application.deductions.filter(is_withheld=True):
@@ -855,15 +889,50 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         loan.sync_schedules()
         return Response({'status': 'schedules_synced'})
     
-    @action(detail=True, methods=['get', 'post'])
+    @action(detail=True, methods=['get', 'post', 'patch', 'delete'])
     def repayments(self, request, pk=None):
         """Get or record repayments."""
         loan = self.get_object()
         
         if request.method == 'GET':
-            repayments = loan.repayments.all()
+            repayments = loan.repayments.all().order_by('-payment_date', '-created_at')
             serializer = LoanRepaymentSerializer(repayments, many=True)
             return Response(serializer.data)
+        
+        if request.method == 'DELETE':
+            repayment_id = request.data.get('repayment_id')
+            if not repayment_id:
+                return Response({"error": "repayment_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            repayment = loan.repayments.filter(id=repayment_id).first()
+            if not repayment:
+                return Response({"error": "Repayment not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            with transaction.atomic():
+                repayment.delete()
+                from .services.reconciler import LoanReconciler
+                LoanReconciler().reconcile_loan(loan.id)
+                
+            return Response({"status": "Repayment deleted and loan reconciled"}, status=status.HTTP_204_NO_CONTENT)
+
+        if request.method == 'PATCH':
+            repayment_id = request.data.get('repayment_id')
+            if not repayment_id:
+                return Response({"error": "repayment_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            repayment = loan.repayments.filter(id=repayment_id).first()
+            if not repayment:
+                return Response({"error": "Repayment not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            serializer = LoanRepaymentSerializer(repayment, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            
+            with transaction.atomic():
+                serializer.save()
+                from .services.reconciler import LoanReconciler
+                LoanReconciler().reconcile_loan(loan.id)
+                
+            return Response(LoanRepaymentSerializer(repayment).data)
         
         # POST - Record payment
         from .services.payment_processor import PaymentProcessor
@@ -975,6 +1044,136 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             'status': 'success',
             'email_sent': email_sent
         })
+
+    @action(detail=True, methods=['post'])
+    def restructure(self, request, pk=None):
+        """Restructure an active loan in-place."""
+        loan = self.get_object()
+        
+        # Validate payload
+        serializer = LoanRestructureSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        from apps.loans.services.refinancing import restructure_loan_in_place
+        
+        try:
+            loan, summary = restructure_loan_in_place(
+                loan=loan,
+                new_term=serializer.validated_data['new_term'],
+                new_interest_rate=serializer.validated_data['new_interest_rate'],
+                new_frequency=serializer.validated_data['new_frequency'],
+                capitalize_arrears=serializer.validated_data['capitalize_arrears'],
+                waive_penalties=serializer.validated_data['waive_penalties'],
+                waive_interest=serializer.validated_data.get('waive_interest', False),
+                user=request.user,
+                notes=serializer.validated_data.get('notes', '')
+            )
+
+            # Audit log
+            from apps.auditlog.signals import log_activity
+            log_activity(
+                action='update',
+                module='loans',
+                instance=loan,
+                description=f"Restructured loan {loan.loan_number}: new term={loan.term}, rate={loan.interest_rate}%, freq={loan.repayment_frequency}"
+            )
+
+
+            return Response({
+                'loan': LoanSerializer(loan).data,
+                'summary': {
+                    'previous_principal': float(summary['snap_principal']),
+                    'previous_interest': float(summary['snap_interest']),
+                    'previous_penalties': float(summary['snap_penalties']),
+                    'waived_penalties': float(summary['waived_penalties']),
+                    'waived_interest': float(summary['waived_interest']),
+                    'capitalized': float(summary['capitalized']),
+                    'new_interest_charged': float(summary['new_interest']),
+                    'new_installments': summary['new_installments'],
+                }
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+    @action(detail=True, methods=['post'])
+    def incharge_collateral(self, request, pk=None):
+        """
+        Manually pledge all collaterals linked to the loan (incharge process).
+        """
+        loan = self.get_object()
+        
+        # Gather all linked collaterals
+        all_collaterals = []
+        if loan.collateral:
+            all_collaterals.append(loan.collateral)
+        all_collaterals.extend(loan.collaterals.all())
+        
+        if not all_collaterals:
+            return Response({'error': 'No collateral linked to this loan.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        pledged_count = 0
+        with transaction.atomic():
+            for coll in all_collaterals:
+                if coll.status == 'available':
+                    # Check if 'is_charged' verified (if applicable)
+                    if not coll.is_charged:
+                        return Response(
+                            {'error': f'Collateral {coll} (Tracker/Logbook) has not been verified (is_charged=False). Verify collateral before incharging.'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    coll.status = 'pledged'
+                    coll.save()
+                    pledged_count += 1
+                    
+            if pledged_count > 0:
+                # Optionally add an audit log
+                from apps.auditlog.models import ActivityLog
+                ActivityLog.objects.create(
+                    organization=loan.organization,
+                    user=request.user,
+                    action=ActivityLog.Action.UPDATE,
+                    module='Loans',
+                    description=f"Incharged {pledged_count} collateral(s) for Loan {loan.loan_number}.",
+                    content_object=loan
+                )
+                
+        return Response({'status': f'Successfully incharged {pledged_count} collateral(s)'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def initiate_discharge(self, request, pk=None):
+        """
+        Initiate the manual discharge process for a paid loan.
+        """
+        loan = self.get_object()
+        from apps.loans.models import Loan
+        if loan.status != Loan.Status.PAID_OFF:
+            return Response(
+                {'error': 'Can only initiate discharge for fully paid or closed loans.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        if hasattr(loan, 'discharge_process'):
+            return Response({'status': 'Discharge process already initiated.'}, status=status.HTTP_200_OK)
+            
+        with transaction.atomic():
+            from apps.loans.models import CollateralDischarge
+            discharge = CollateralDischarge.objects.create(
+                loan=loan,
+                status=CollateralDischarge.Status.PENDING
+            )
+            
+            from apps.auditlog.models import ActivityLog
+            ActivityLog.objects.create(
+                organization=loan.organization,
+                user=request.user,
+                action=ActivityLog.Action.CREATE,
+                module='Loans',
+                description=f"Initiated collateral discharge for Loan {loan.loan_number}.",
+                content_object=discharge
+            )
+            
+        return Response({'status': 'Discharge process initiated successfully.'}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
@@ -1237,6 +1436,48 @@ def arrears_reports(request):
 
 
 @api_view(['GET'])
+def export_arrears_report(request):
+    """ Export consolidated Arrears Management Report (PDF/DOCX) """
+    from .services.arrears import get_arrears_aging_report, calculate_par_metrics, update_all_loans_arrears_status
+    from .serializers import CollectionCaseSerializer
+    from apps.loans.models import CollectionCase
+    from apps.accounting.utils.pdf import generate_arrears_management_pdf
+    from apps.accounting.utils.docx import generate_arrears_management_docx
+    from django.http import HttpResponse
+    
+    # Ensure data is fresh
+    update_all_loans_arrears_status()
+    
+    # Collect data
+    aging = get_arrears_aging_report()
+    par = calculate_par_metrics()
+    cases_qs = CollectionCase.objects.filter(status__in=['active', 'escalated']).select_related('loan', 'loan__borrower')
+    cases_data = CollectionCaseSerializer(cases_qs, many=True).data
+    
+    report_data = {
+        'aging': aging,
+        'par': par,
+        'cases': cases_data
+    }
+    
+    export_type = request.query_params.get('export_type', 'pdf').lower()
+    tenant = getattr(request.user, 'organization', None)
+    
+    if export_type == 'docx':
+        buffer = generate_arrears_management_docx(report_data, tenant)
+        filename = f"Arrears_Report_{timezone.now().strftime('%Y%m%d')}.docx"
+        content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    else:
+        buffer = generate_arrears_management_pdf(report_data, tenant)
+        filename = f"Arrears_Report_{timezone.now().strftime('%Y%m%d')}.pdf"
+        content_type = 'application/pdf'
+        
+    response = HttpResponse(buffer.getvalue(), content_type=content_type)
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@api_view(['GET'])
 def collections_forecast_detail(request):
     """ Get detailed breakdown for a specific forecast month """
     from .services.arrears import get_collections_breakdown
@@ -1365,6 +1606,62 @@ def dashboard_summary(request):
             'count': active_portfolio_qs.filter(product=product).count()
         })
 
+    # 10. MTD Collections & Revenue
+    from apps.loans.models import LoanRepayment, RepaymentSchedule
+    repayments_mtd_qs = scope_queryset(request.user, LoanRepayment.objects.filter(
+        payment_date__gte=start_of_month,
+        payment_date__lte=today
+    ))
+    total_collections_mtd = repayments_mtd_qs.aggregate(total=Sum('amount'))['total'] or 0
+    interest_paid_mtd = repayments_mtd_qs.aggregate(total=Sum('interest_paid'))['total'] or 0
+    penalty_paid_mtd = repayments_mtd_qs.aggregate(total=Sum('penalty_paid'))['total'] or 0
+    revenue_mtd = interest_paid_mtd + penalty_paid_mtd
+
+    # 11. Upcoming Repayments
+    from datetime import timedelta
+    upcoming_installments = scope_queryset(request.user, RepaymentSchedule.objects.filter(
+        loan__isnull=False,
+        status__in=['pending', 'partial'],
+        due_date__gte=today,
+        due_date__lte=today + timedelta(days=7)
+    )).order_by('due_date').select_related('loan', 'loan__borrower')[:5]
+    
+    upcoming_repayments = []
+    for inst in upcoming_installments:
+        borrower = inst.loan.borrower
+        b_name = borrower.business_name if borrower.borrower_type != 'individual' else f"{borrower.first_name or ''} {borrower.last_name or ''}".strip()
+        upcoming_repayments.append({
+            'loan_number': inst.loan.loan_number,
+            'amount_due': float(inst.total_due),
+            'due_date': inst.due_date.isoformat(),
+            'borrower_name': b_name or str(borrower)
+        })
+
+    # 12. Collections Breakdown (Last 12 Months)
+    collections_breakdown = []
+    for i in range(11, -1, -1):
+        c_month_start = (today.replace(day=1) - relativedelta(months=i))
+        c_month_end = c_month_start + relativedelta(months=1) - relativedelta(days=1)
+        
+        c_month_qs = scope_queryset(request.user, LoanRepayment.objects.filter(
+            payment_date__gte=c_month_start,
+            payment_date__lte=c_month_end
+        ))
+        
+        c_totals = c_month_qs.aggregate(
+            principal=Sum('principal_paid'),
+            interest=Sum('interest_paid'),
+            penalty=Sum('penalty_paid')
+        )
+        
+        collections_breakdown.append({
+            'month': c_month_start.strftime('%b'),
+            'year': c_month_start.year,
+            'principal': float(c_totals['principal'] or 0),
+            'interest': float(c_totals['interest'] or 0),
+            'penalty': float(c_totals['penalty'] or 0)
+        })
+
     return Response({
         'portfolio_value': portfolio_value,
         'portfolio_principal': portfolio_principal,
@@ -1393,8 +1690,14 @@ def dashboard_summary(request):
         'branch_performance': branch_performance,
         'product_performance': product_performance,
         'portfolio_growth_percentage': 5.2,
-        'currency': 'KES'
+        'currency': 'KES',
+        
+        'total_collections_mtd': float(total_collections_mtd),
+        'revenue_mtd': float(revenue_mtd),
+        'upcoming_repayments': upcoming_repayments,
+        'collections_breakdown': collections_breakdown
     })
+
 class LoanGuarantorViewSet(viewsets.ModelViewSet):
     queryset = LoanGuarantor.objects.all()
     serializer_class = LoanGuarantorSerializer

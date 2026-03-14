@@ -2,7 +2,7 @@
 
 import { Users, Wallet, TrendingUp, AlertCircle, Building2, FileText, DollarSign, Activity, UserMinus } from 'lucide-react';
 import MetricCard from './MetricCard';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 
 interface DashboardData {
     portfolio_value: number;
@@ -22,6 +22,7 @@ interface DashboardData {
     inactive_borrowers: number;
     trends?: { month: string; disbursements: number }[];
     product_performance?: { name: string; portfolio_value: number; count: number }[];
+    collections_breakdown?: { month: string; year: number; principal: number; interest: number; penalty: number }[];
 }
 
 export default function BranchDashboard({ data, branchName }: { data: DashboardData, branchName?: string }) {
@@ -134,7 +135,7 @@ export default function BranchDashboard({ data, branchName }: { data: DashboardD
                     <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Composition</h3>
                     {portfolioBreakdownData.length > 0 ? (
                         <div className="h-[250px] w-full">
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minHeight={0}>
                                 <PieChart>
                                     <Pie
                                         data={portfolioBreakdownData}
@@ -175,7 +176,7 @@ export default function BranchDashboard({ data, branchName }: { data: DashboardD
                 <div className="glass rounded-xl p-6 border border-border lg:col-span-1">
                     <h3 className="text-lg font-semibold text-foreground mb-4">Disbursement Trends</h3>
                     <div className="h-[260px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minHeight={0}>
                             <BarChart data={data.trends || []} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                                 <XAxis
@@ -219,6 +220,40 @@ export default function BranchDashboard({ data, branchName }: { data: DashboardD
                                 </div>
                             </div>
                         ))}
+                    </div>
+                </div>
+
+                <div className="glass rounded-xl p-6 border border-border">
+                    <h3 className="text-lg font-semibold text-foreground mb-4">Collections Breakdown</h3>
+                    <div className="h-[250px] w-full">
+                        <ResponsiveContainer width="100%" height="100%" minHeight={0}>
+                            <BarChart data={data.collections_breakdown || []} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                                <XAxis
+                                    dataKey="month"
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+                                    dy={10}
+                                />
+                                <YAxis
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tickFormatter={(value) => `K ${value / 1000}k`}
+                                    tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+                                    width={65}
+                                />
+                                <Tooltip
+                                    formatter={(value: any, name: any) => [formatCurrency(value as number), name ? String(name).charAt(0).toUpperCase() + String(name).slice(1) : '']}
+                                    cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
+                                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '0.5rem', color: 'hsl(var(--foreground))' }}
+                                />
+                                <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px' }} />
+                                <Bar dataKey="principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} />
+                                <Bar dataKey="interest" stackId="a" fill="#10b981" />
+                                <Bar dataKey="penalty" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                            </BarChart>
+                        </ResponsiveContainer>
                     </div>
                 </div>
             </div>

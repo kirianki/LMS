@@ -6,7 +6,7 @@ from .views import (
 )
 
 router = DefaultRouter()
-router.register(r'collateral', CollateralViewSet)
+router.register(r'', CollateralViewSet)
 router.register(r'valuers', ValuerViewSet)
 router.register(r'valuation-requests', ValuationRequestViewSet)
 router.register(r'valuation-reports', ValuationReportViewSet)

@@ -901,6 +901,7 @@ export default function ApplicationDetailPage() {
                 borrowerId={application.borrower_details.id}
                 onSelect={handleSelectCollateral}
                 onAddNew={() => router.push(`/collateral/new?application=${application.id}&borrower=${application.borrower_details.id}`)}
+                refinanceLoanId={application.refinances_loan}
             />
 
             <GuarantorEntryModal
