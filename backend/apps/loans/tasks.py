@@ -115,23 +115,23 @@ def calculate_loan_penalties():
         
         # Check grace period
         days_overdue = (today - schedule.due_date).days
-        if days_overdue <= product.penalty_grace_period:
+        if days_overdue <= loan.penalty_grace_period:
             continue
         
         # Calculate penalty using both type and basis
-        penalty_days = days_overdue - product.penalty_grace_period
+        penalty_days = days_overdue - loan.penalty_grace_period
 
         # Determine the penalty base amount
-        if product.penalty_type == 'percentage':
+        if loan.penalty_type == 'percentage':
             # Calculate based on the UNPAID principal of this specific installment
             arrears_principal = max(Decimal('0'), schedule.principal_due - schedule.principal_paid)
-            rate = product.penalty_value / Decimal('100')
+            rate = loan.penalty_value / Decimal('100')
             base_penalty = arrears_principal * rate
         else:  # fixed
-            base_penalty = product.penalty_value
+            base_penalty = loan.penalty_value
 
         # Apply the basis (how often it accrues)
-        basis = getattr(product, 'penalty_basis', 'per_day')
+        basis = getattr(loan, 'penalty_basis', 'per_day')
         if basis == 'per_installment':
             # One-off flat fee — does NOT multiply by days
             total_penalty = base_penalty
