@@ -111,6 +111,7 @@ interface Installment {
     interest_due: number;
     fees_due: number;
     total_due: number;
+    penalty_due: number;
     status: string;
     status_display: string;
 }
@@ -685,13 +686,21 @@ export default function LoanDetailPage() {
                                                         <p className="text-sm font-bold text-foreground">
                                                             I: KES {Number(installment.interest_due).toLocaleString()}
                                                         </p>
+                                                        {Number(installment.penalty_due) > 0 && (
+                                                            <>
+                                                                <div className="h-1 w-1 rounded-full bg-border" />
+                                                                <p className="text-sm font-bold text-rose-500">
+                                                                    Pen: KES {Number(installment.penalty_due).toLocaleString()}
+                                                                </p>
+                                                            </>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
                                             <div className="flex flex-col items-end gap-2">
                                                 <div className="text-right">
                                                     <p className="text-xl font-black text-foreground tabular-nums">
-                                                        KES {Number(installment.total_due).toLocaleString()}
+                                                        KES {(Number(installment.total_due) + Number(installment.penalty_due || 0)).toLocaleString()}
                                                     </p>
                                                     <span className={`inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${installment.status === 'paid' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
                                                         installment.status === 'partial' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
