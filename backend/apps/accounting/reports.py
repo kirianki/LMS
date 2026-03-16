@@ -193,6 +193,7 @@ def generate_profit_loss(start_date, end_date, organization=None):
             
             if direct_balance != 0:
                 details.append({
+                    'id': str(acc.id),
                     'code': acc.code,
                     'name': f"{acc.code} - {acc.name}",
                     'amount': direct_balance

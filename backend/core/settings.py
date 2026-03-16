@@ -1,6 +1,7 @@
 import os
 import environ
 from pathlib import Path
+from celery.schedules import crontab
 
 # --- Environment Configuration ---
 env = environ.Env(
@@ -165,21 +166,29 @@ CELERY_TIMEZONE = TIME_ZONE
 
 # Celery Beat Schedule (Periodic Tasks)
 CELERY_BEAT_SCHEDULE = {
-    'send-upcoming-payment-reminders': {
-        'task': 'apps.loans.tasks.send_upcoming_payment_reminders',
-        'schedule': 60 * 60 * 24,  # Daily
-    },
-    'send-overdue-payment-reminders': {
-        'task': 'apps.loans.tasks.send_overdue_payment_reminders',
-        'schedule': 60 * 60 * 24,  # Daily
+    'update-arrears-status': {
+        'task': 'apps.loans.tasks.update_arrears_status',
+        'schedule': crontab(hour=8, minute=0),
     },
     'calculate-loan-penalties': {
         'task': 'apps.loans.tasks.calculate_loan_penalties',
-        'schedule': 60 * 60 * 24,  # Daily
+        'schedule': crontab(hour=8, minute=5),
+    },
+    'send-overdue-payment-reminders': {
+        'task': 'apps.loans.tasks.send_overdue_payment_reminders',
+        'schedule': crontab(hour=8, minute=10),
+    },
+    'send-upcoming-payment-reminders': {
+        'task': 'apps.loans.tasks.send_upcoming_payment_reminders',
+        'schedule': crontab(hour=8, minute=15),
+    },
+    'check-payment-promises': {
+        'task': 'apps.loans.tasks.check_payment_promises',
+        'schedule': crontab(hour=8, minute=20),
     },
     'create-daily-financial-snapshots': {
         'task': 'apps.treasury.tasks.create_daily_financial_snapshots',
-        'schedule': 60 * 60 * 24,  # Daily
+        'schedule': crontab(hour=8, minute=25),
     },
     'reconcile-treasury-coa': {
         'task': 'apps.treasury.tasks.reconcile_treasury_coa',

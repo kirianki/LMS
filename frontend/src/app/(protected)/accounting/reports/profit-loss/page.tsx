@@ -11,17 +11,31 @@ import {
     DollarSign,
     FileText
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import api from '@/lib/api';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
+import { Suspense } from 'react';
 
-export default function ProfitLoss() {
+export default function ProfitLossPage() {
+    return (
+        <Suspense fallback={
+            <div className="h-64 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+        }>
+            <ProfitLoss />
+        </Suspense>
+    );
+}
+
+function ProfitLoss() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [loading, setLoading] = useState(true);
     const [data, setData] = useState<any>(null);
     const [dateRange, setDateRange] = useState({
-        start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
-        end: format(endOfMonth(new Date()), 'yyyy-MM-dd')
+        start: searchParams.get('start_date') || format(startOfMonth(new Date()), 'yyyy-MM-dd'),
+        end: searchParams.get('end_date') || format(endOfMonth(new Date()), 'yyyy-MM-dd')
     });
 
     const fetchReport = async () => {
@@ -184,8 +198,12 @@ export default function ProfitLoss() {
                             <div className="p-0">
                                 {(data?.income?.details ?? []).length > 0 ? (
                                     (data?.income?.details ?? []).map((account: any, idx: number) => (
-                                        <div key={idx} className="flex items-center justify-between p-4 border-b border-border/50 last:border-0 hover:bg-white/5 transition-colors">
-                                            <span className="text-sm text-foreground">{account.name}</span>
+                                        <div
+                                            key={idx}
+                                            className="flex items-center justify-between p-4 border-b border-border/50 last:border-0 hover:bg-white/5 cursor-pointer group transition-colors"
+                                            onClick={() => router.push(`/accounting/reports/general-ledger?account_id=${account.id}&start_date=${dateRange.start}&end_date=${dateRange.end}`)}
+                                        >
+                                            <span className="text-sm text-foreground group-hover:text-primary transition-colors">{account.name}</span>
                                             <span className="text-sm font-medium text-emerald-400">{formatCurrency(account.amount)}</span>
                                         </div>
                                     ))
@@ -207,8 +225,12 @@ export default function ProfitLoss() {
                             <div className="p-0">
                                 {(data?.expenses?.details ?? []).length > 0 ? (
                                     (data?.expenses?.details ?? []).map((account: any, idx: number) => (
-                                        <div key={idx} className="flex items-center justify-between p-4 border-b border-border/50 last:border-0 hover:bg-white/5 transition-colors">
-                                            <span className="text-sm text-foreground">{account.name}</span>
+                                        <div
+                                            key={idx}
+                                            className="flex items-center justify-between p-4 border-b border-border/50 last:border-0 hover:bg-white/5 cursor-pointer group transition-colors"
+                                            onClick={() => router.push(`/accounting/reports/general-ledger?account_id=${account.id}&start_date=${dateRange.start}&end_date=${dateRange.end}`)}
+                                        >
+                                            <span className="text-sm text-foreground group-hover:text-primary transition-colors">{account.name}</span>
                                             <span className="text-sm font-medium text-rose-400">{formatCurrency(account.amount)}</span>
                                         </div>
                                     ))
