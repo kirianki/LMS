@@ -125,6 +125,28 @@ class LedgerEntry(models.Model):
                 acc.balance -= self.amount
         acc.save()
 
+    def delete(self, *args, **kwargs):
+        # Reverse account balance if it was posted
+        if self.is_posted:
+            self._reverse_account_balance()
+        super().delete(*args, **kwargs)
+
+    def _reverse_account_balance(self):
+        """Reverse the effect of this ledger entry on the COA balance."""
+        acc = self.account
+        acc_type = acc.account_type
+        if acc_type in ['asset', 'expense']:
+            if self.entry_type == LedgerEntry.EntryType.DEBIT:
+                acc.balance -= self.amount
+            else:
+                acc.balance += self.amount
+        else: # Liability, Equity, Income
+            if self.entry_type == LedgerEntry.EntryType.CREDIT:
+                acc.balance -= self.amount
+            else:
+                acc.balance += self.amount
+        acc.save()
+
     def __str__(self):
         return f"{self.get_entry_type_display()} - {self.account.name}: {self.amount}"
     

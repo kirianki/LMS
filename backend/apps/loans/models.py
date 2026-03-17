@@ -657,13 +657,22 @@ class RepaymentSchedule(models.Model):
     principal_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'),
                                          help_text="Principal collected against this installment so far")
     
+    last_penalty_accrual_date = models.DateField(null=True, blank=True,
+                                               help_text="Last date a penalty unit was applied to this schedule")
+    
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     
     created_at = models.DateTimeField(default=timezone.now)
     
     history = HistoricalRecords()
     
+    @property
+    def life_balance(self):
+        """Remaining balance for this installment including penalties."""
+        return (self.total_due + self.penalty_due) - self.paid_amount
+
     def __str__(self):
+
         if self.loan_id:
             return f"{self.loan.loan_number} - Installment {self.installment_number}"
         if self.application_id:
@@ -712,6 +721,12 @@ class LoanRepayment(models.Model):
     
     history = HistoricalRecords()
     
+    def delete(self, *args, **kwargs):
+        """Clean up associated accounting and treasury records before deletion."""
+        from apps.treasury.services.integrity import void_repayment_financials
+        void_repayment_financials(self)
+        super().delete(*args, **kwargs)
+
     def __str__(self):
         return f"{self.loan.loan_number} - {self.amount} on {self.payment_date}"
     

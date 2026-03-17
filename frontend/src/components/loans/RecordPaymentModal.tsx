@@ -14,7 +14,7 @@ interface RecordPaymentModalProps {
 
 export default function RecordPaymentModal({ loan, isOpen, onClose, onSuccess, installment }: RecordPaymentModalProps) {
     const [formData, setFormData] = useState<any>({
-        amount: installment ? (Number(installment.total_due) - Number(installment.paid_amount)).toString() : '',
+        amount: installment ? (Number(installment.total_due) + Number(installment.penalty_due || 0) - Number(installment.paid_amount)).toString() : '',
         payment_date: new Date().toISOString().split('T')[0],
         payment_method: 'mpesa',
         reference_number: '',
@@ -176,27 +176,39 @@ export default function RecordPaymentModal({ loan, isOpen, onClose, onSuccess, i
                 <div className="p-8 overflow-y-auto flex-1 space-y-6">
                     <form id="recordPaymentForm" onSubmit={handleSubmit} className="space-y-6">
                         {/* Outstanding Balance Summary */}
-                        <div className="grid grid-cols-3 gap-6 p-6 rounded-3xl bg-muted/30 border border-border relative overflow-hidden">
+                        <div className="grid grid-cols-4 gap-4 p-6 rounded-3xl bg-muted/30 border border-border relative overflow-hidden">
                             <div className="absolute top-0 right-0 p-2 opacity-5">
                                 <Banknote className="h-12 w-12" />
                             </div>
                             <div className="space-y-1 relative z-10">
-                                <p className="text-[10px] font-black text-foreground uppercase tracking-widest opacity-60">Penalties Due</p>
-                                <p className={`text-sm font-black ${installment ? (Number(installment.penalty_due) > 0 ? 'text-orange-500' : 'text-foreground/40') : (Number(loan.outstanding_penalties) > 0 ? 'text-orange-500' : 'text-foreground/40')}`}>
+                                <p className="text-[10px] font-black text-foreground uppercase tracking-widest opacity-60">Penalties</p>
+                                <p className={`text-xs font-black ${installment ? (Number(installment.penalty_due) > 0 ? 'text-orange-500' : 'text-foreground/40') : (Number(loan.outstanding_penalties) > 0 ? 'text-orange-500' : 'text-foreground/40')}`}>
                                     KES {installment ? Number(installment.penalty_due || 0).toLocaleString() : Number(loan.outstanding_penalties || 0).toLocaleString()}
                                 </p>
                             </div>
                             <div className="space-y-1 relative z-10">
-                                <p className="text-[10px] font-black text-foreground uppercase tracking-widest opacity-60">Interest Due</p>
-                                <p className="text-sm font-black text-foreground">
+                                <p className="text-[10px] font-black text-foreground uppercase tracking-widest opacity-60">Interest</p>
+                                <p className="text-xs font-black text-foreground">
                                     KES {installment ? Number(installment.interest_due || 0).toLocaleString() : Number(loan.outstanding_interest || 0).toLocaleString()}
                                 </p>
                             </div>
                             <div className="space-y-1 relative z-10">
-                                <p className="text-[10px] font-black text-foreground uppercase tracking-widest opacity-60">Principal Due</p>
-                                <p className="text-sm font-black text-foreground">
+                                <p className="text-[10px] font-black text-foreground uppercase tracking-widest opacity-60">Principal</p>
+                                <p className="text-xs font-black text-foreground">
                                     KES {installment ? Number(installment.principal_due || 0).toLocaleString() : Number(loan.outstanding_principal || 0).toLocaleString()}
                                 </p>
+                            </div>
+                            <div className="space-y-1 relative z-10 border-l border-border pl-4">
+                                <p className="text-[10px] font-black text-primary uppercase tracking-widest opacity-80">Remaining Breakdown</p>
+                                <div className="flex flex-col">
+                                    <p className="text-[10px] font-bold text-foreground">
+                                        P: {installment ? (Number(installment.principal_due) - Number(installment.principal_paid || 0)).toLocaleString() : 'N/A'} |
+                                        I: {installment ? (Number(installment.interest_due) - Number(installment.interest_paid || 0)).toLocaleString() : 'N/A'}
+                                    </p>
+                                    <p className="text-xs font-black text-primary">
+                                        Total: KES {installment ? (Number(installment.total_due) + Number(installment.penalty_due || 0) - Number(installment.paid_amount)).toLocaleString() : (Number(loan.outstanding_balance || 0)).toLocaleString()}
+                                    </p>
+                                </div>
                             </div>
                         </div>
 

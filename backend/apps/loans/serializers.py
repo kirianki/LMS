@@ -347,9 +347,14 @@ class RepaymentScheduleSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'installment_number', 'due_date', 'principal_due', 
             'interest_due', 'fees_due', 'total_due', 'paid_amount', 
-            'penalty_due', 'status', 'status_display'
+            'principal_paid', 'interest_paid', 'penalty_paid',
+            'penalty_due', 'status', 'status_display', 'life_balance'
         ]
-        read_only_fields = ['id', 'status', 'status_display', 'total_due']
+        read_only_fields = [
+            'id', 'status', 'status_display', 'total_due', 'life_balance',
+            'principal_paid', 'interest_paid', 'penalty_paid'
+        ]
+
 
 
 class LoanRepaymentSerializer(serializers.ModelSerializer):

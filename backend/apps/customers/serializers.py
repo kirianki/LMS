@@ -8,11 +8,13 @@ from apps.branches.models import Branch
 logger = logging.getLogger(__name__)
 
 class BorrowerContactSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(required=False)
     class Meta:
         model = BorrowerContact
         fields = ['id', 'first_name', 'last_name', 'phone_number', 'email', 'designation', 'is_primary']
 
 class BorrowerPhoneSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(required=False)
     class Meta:
         model = BorrowerPhone
         fields = ['id', 'phone_number', 'description', 'is_mpesa']
@@ -67,27 +69,40 @@ class BorrowerSerializer(serializers.ModelSerializer):
         return borrower
 
     def update(self, instance, validated_data):
-        contacts_data = validated_data.pop('contacts', [])
-        phones_data = validated_data.pop('additional_phones', [])
+        contacts_data = validated_data.pop('contacts', None)
+        phones_data = validated_data.pop('additional_phones', None)
+        
         instance = super().update(instance, validated_data)
         
-        if contacts_data:
-            for contact_data in contacts_data:
-                cid = contact_data.get('id')
+        # Sync Contacts
+        if contacts_data is not None:
+            keep_contacts = []
+            for contact_item in contacts_data:
+                cid = contact_item.get('id')
                 if cid:
-                    BorrowerContact.objects.filter(id=cid, borrower=instance).update(**contact_data)
+                    BorrowerContact.objects.filter(id=cid, borrower=instance).update(**contact_item)
+                    keep_contacts.append(cid)
                 else:
-                    BorrowerContact.objects.create(borrower=instance, **contact_data)
+                    new_contact = BorrowerContact.objects.create(borrower=instance, **contact_item)
+                    keep_contacts.append(new_contact.id)
+            
+            # Delete contacts not in the sync list
+            BorrowerContact.objects.filter(borrower=instance).exclude(id__in=keep_contacts).delete()
         
-        if phones_data:
-            # For simplicity, if phones are provided in update, we sync them
-            # We'll keep existing ones and add new ones or update if id provided
-            for phone_data in phones_data:
-                pid = phone_data.get('id')
+        # Sync Additional Phones
+        if phones_data is not None:
+            keep_phones = []
+            for phone_item in phones_data:
+                pid = phone_item.get('id')
                 if pid:
-                    BorrowerPhone.objects.filter(id=pid, borrower=instance).update(**phone_data)
+                    BorrowerPhone.objects.filter(id=pid, borrower=instance).update(**phone_item)
+                    keep_phones.append(pid)
                 else:
-                    BorrowerPhone.objects.create(borrower=instance, **phone_data)
+                    new_phone = BorrowerPhone.objects.create(borrower=instance, **phone_item)
+                    keep_phones.append(new_phone.id)
+            
+            # Delete phones not in the sync list
+            BorrowerPhone.objects.filter(borrower=instance).exclude(id__in=keep_phones).delete()
         
         return instance
 

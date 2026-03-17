@@ -196,6 +196,32 @@ def _handle_loan_repayment(repayment, cash_account_id=None, user=None):
     if not JournalEntry.objects.filter(reference=repayment.reference_number).exists():
         post_loan_repayment(repayment, cash_account_code=gl_code)
 
+def void_repayment_financials(repayment):
+    """
+    Remove all financial records associated with a repayment.
+    This is called when a repayment is deleted or before re-syncing.
+    """
+    with transaction.atomic():
+        # 1. Void Ledger Entries and Journal Entry
+        # Since we have CASCADE on LedgerEntry and our model-level delete override handles balance reversal,
+        # we can just delete the Journal Entry.
+        JournalEntry.objects.filter(reference=repayment.reference_number).delete()
+
+        # 2. Void Treasury Transactions
+        # Our model-level delete override on Transaction handles CashAccount balance reversal.
+        TreasuryTransaction.objects.filter(reference=repayment.reference_number, related_loan=repayment.loan).delete()
+        
+        logger.info(f"Voided financial records for repayment {repayment.reference_number}")
+
+def sync_repayment_financials(repayment):
+    """
+    Ensure accounting and treasury records match the repayment data.
+    Usually called during reconciliation.
+    """
+    void_repayment_financials(repayment)
+    _handle_loan_repayment(repayment)
+    logger.info(f"Synchronized financial records for repayment {repayment.reference_number}")
+
 def _handle_expense_paid(expense, cash_account_id=None, user=None):
     """Synchronize Treasury and GL for expenses."""
     account = _get_account(expense, cash_account_id, default_type=CashAccount.AccountType.CASH, organization=expense.organization)

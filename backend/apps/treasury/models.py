@@ -139,6 +139,15 @@ class Transaction(models.Model):
             self.account.save()
         super().save(*args, **kwargs)
     
+    def delete(self, *args, **kwargs):
+        # Reverse account balance update
+        if self.transaction_type == self.TransactionType.CREDIT:
+            self.account.current_balance -= self.amount
+        else:
+            self.account.current_balance += self.amount
+        self.account.save()
+        super().delete(*args, **kwargs)
+
     def __str__(self):
         return f"{self.get_transaction_type_display()} - {self.amount} ({self.get_category_display()})"
     

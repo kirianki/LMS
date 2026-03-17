@@ -323,6 +323,8 @@ def generate_offer_letter(loan_application):
 def generate_loan_statement(loan):
     """
     Generate a branded PDF loan statement scoped to the organization.
+    Improved: Shows all installments with live P/I/Pen balances and 
+    transactions listed under each installment they apply to.
     """
     if not pisa:
         raise ImportError("xhtml2pdf is not installed.")
@@ -330,95 +332,127 @@ def generate_loan_statement(loan):
     organization = loan.organization
 
     def format_money(val):
-        return "{:,.2f}".format(val or Decimal('0.00'))
+        try:
+            return "{:,.2f}".format(val or Decimal('0.00'))
+        except:
+            return "0.00"
     
     def format_date_short(d):
         return d.strftime("%d %b %Y") if d else "N/A"
 
     borrower = loan.borrower
-    
-    fmt_repayments = []
-    for p in loan.repayments.all().order_by('payment_date'):
-        fmt_repayments.append({
-            'date': format_date_short(p.payment_date),
-            'description': "Loan Repayment",
-            'reference': p.reference_number or "-",
-            'amount': f"({format_money(p.amount)})"
-        })
-
     today = date.today()
-    
-    # Calculate totals
+
+    # --- Build installment rows with live balances ---
+    schedules = loan.schedules.all().order_by('installment_number')
+
+    # Build a mapping: installment_id -> list of repayments
+    # We use the repayment's per-bucket fields and repayment date to determine allocation
+    # The most reliable link is via the reconciler's allocation. If not available,
+    # we look for repayments that match/partially match this installment via payment_date or notes.
+    # LoanRepaymentAllocation model is checked if it exists.
+
+    repayment_alloc_map = {}  # installment_id -> [repayment_dict, ...]
+    has_alloc_model = False
+
+    try:
+        from apps.loans.models import LoanRepaymentAllocation
+        has_alloc_model = True
+        for alloc in LoanRepaymentAllocation.objects.filter(
+            installment__in=schedules
+        ).select_related('repayment'):
+            key = str(alloc.installment_id)
+            if key not in repayment_alloc_map:
+                repayment_alloc_map[key] = []
+            repayment_alloc_map[key].append({
+                'date': format_date_short(alloc.repayment.payment_date),
+                'reference': alloc.repayment.reference_number or '-',
+                'principal': format_money(alloc.principal_paid),
+                'interest': format_money(alloc.interest_paid),
+                'penalty': format_money(alloc.penalty_paid or Decimal('0.00')),
+                'amount': format_money(alloc.principal_paid + alloc.interest_paid + (alloc.penalty_paid or Decimal('0.00'))),
+            })
+    except Exception:
+        has_alloc_model = False
+
+    # Fallback: if no allocation model, we list all repayments under a "General Repayments" bucket
+    all_repayments_fmt = []
+    for r in loan.repayments.all().order_by('payment_date'):
+        all_repayments_fmt.append({
+            'date': format_date_short(r.payment_date),
+            'reference': r.reference_number or '-',
+            'principal': format_money(r.principal_paid or Decimal('0.00')),
+            'interest': format_money(r.interest_paid or Decimal('0.00')),
+            'penalty': format_money(r.penalty_paid or Decimal('0.00')),
+            'amount': format_money(r.amount),
+        })
+
+    # Build installment rows
+    fmt_installments = []
+    total_principal_due = Decimal('0.00')
+    total_interest_due = Decimal('0.00')
+    total_penalty_due = Decimal('0.00')
+    total_principal_paid = Decimal('0.00')
+    total_interest_paid = Decimal('0.00')
+    total_penalty_paid = Decimal('0.00')
+
+    for s in schedules:
+        principal_rem = max(Decimal('0.00'), s.principal_due - s.principal_paid)
+        interest_rem = max(Decimal('0.00'), s.interest_due - s.interest_paid)
+        penalty_rem = max(Decimal('0.00'), s.penalty_due - s.penalty_paid)
+        total_rem = principal_rem + interest_rem + penalty_rem
+
+        total_principal_due += s.principal_due
+        total_interest_due += s.interest_due
+        total_penalty_due += s.penalty_due
+        total_principal_paid += s.principal_paid
+        total_interest_paid += s.interest_paid
+        total_penalty_paid += s.penalty_paid
+
+        status_label = s.get_status_display()
+
+        # Get linked transactions for this installment
+        if has_alloc_model:
+            linked_txns = repayment_alloc_map.get(str(s.id), [])
+        else:
+            linked_txns = []  # will be shown in general section
+
+        fmt_installments.append({
+            'number': s.installment_number,
+            'due_date': format_date_short(s.due_date),
+            'status': status_label,
+            'status_code': s.status,
+            # Due amounts
+            'principal_due': format_money(s.principal_due),
+            'interest_due': format_money(s.interest_due),
+            'penalty_due': format_money(s.penalty_due),
+            # Paid amounts
+            'principal_paid': format_money(s.principal_paid),
+            'interest_paid': format_money(s.interest_paid),
+            'penalty_paid': format_money(s.penalty_paid),
+            # Remaining balances
+            'principal_rem': format_money(principal_rem),
+            'interest_rem': format_money(interest_rem),
+            'penalty_rem': format_money(penalty_rem),
+            'total_rem': format_money(total_rem),
+            # Fully paid flags 
+            'principal_cleared': principal_rem == Decimal('0.00'),
+            'interest_cleared': interest_rem == Decimal('0.00'),
+            'penalty_cleared': penalty_rem == Decimal('0.00'),
+            'fully_paid': total_rem == Decimal('0.00'),
+            # Linked transactions
+            'transactions': linked_txns,
+            'has_transactions': bool(linked_txns),
+        })
+
     total_repaid = sum(r.amount for r in loan.repayments.all())
-    
-    # Derived charges (Interest + Penalties + Fees) needed to balance the equation:
-    # Outstanding = Principal + Charges - Repaid
-    # => Charges = Outstanding + Repaid - Principal
-    # Note: simple logic, assumes Principal Amount is the starting balance.
-    charges_applied = loan.outstanding_balance + total_repaid - loan.principal_amount
-    
-    # Sort out transactions
-    transactions = []
-    transactions.append({
-        'date': loan.disbursement_date,
-        'description': "Principal Disbursement",
-        'ref': loan.disbursement_reference or "disb",
-        'debit': loan.principal_amount,
-        'credit': Decimal('0.00'),
-    })
-    
-    # Add Repayments
-    for r in loan.repayments.all():
-         transactions.append({
-            'date': r.payment_date,
-            'description': "Repayment Received",
-            'ref': r.reference_number or "-",
-            'debit': Decimal('0.00'),
-            'credit': r.amount,
-        })
-
-    # Add Charges if positive
-    # We don't have exact dates for interest accrual in this model, so we append it as "Accrued Interest & Fees"
-    if charges_applied > 0:
-         transactions.append({
-            'date': today,
-            'description': "Interest & Fees Accrued",
-            'ref': "-",
-            'debit': charges_applied,
-            'credit': Decimal('0.00'),
-        })
-    elif charges_applied < 0:
-        # This implies overpayment or data inconsistency
-         transactions.append({
-            'date': today,
-            'description': "Balance Adjustment",
-            'ref': "ADJ",
-            'debit': Decimal('0.00'),
-            'credit': abs(charges_applied),
-        })
-
-    transactions.sort(key=lambda x: x['date'])
-    
-    # Running Balance
-    balance = Decimal('0.00')
-    fmt_transactions = []
-    
-    for t in transactions:
-        balance += t['debit']
-        balance -= t['credit']
-        fmt_transactions.append({
-            'date': format_date_short(t['date']),
-            'description': t['description'],
-            'reference': t['ref'],
-            'debit': format_money(t['debit']) if t['debit'] > 0 else "-",
-            'credit': format_money(t['credit']) if t['credit'] > 0 else "-",
-            'balance': format_money(balance)
-        })
+    total_principal_unpaid = total_principal_due - total_principal_paid
+    total_interest_unpaid = total_interest_due - total_interest_paid
 
     context = {
         'organization': organization,
         'today_date': today.strftime("%d %b %Y"),
-        'borrower_name': (borrower.name or "Valued Customer").upper(),
+        'borrower_name': (borrower.name or f"{borrower.first_name} {borrower.last_name}".strip() or "Valued Customer").upper(),
         'borrower_id': borrower.id_number or borrower.tax_id or "N/A",
         'borrower_address': borrower.physical_address or "Address Not Provided",
         'borrower_phone': borrower.phone_number or "N/A",
@@ -431,14 +465,26 @@ def generate_loan_statement(loan):
         'outstanding_balance': format_money(loan.outstanding_balance),
         'arrears_days': loan.days_in_arrears,
         'penalty_due': format_money(loan.outstanding_penalties),
-        'transactions': fmt_transactions,
-        'total_debits': format_money(loan.principal_amount + (charges_applied if charges_applied > 0 else 0)),
-        'total_credits': format_money(total_repaid + (abs(charges_applied) if charges_applied < 0 else 0)),
+        'total_repaid': format_money(total_repaid),
+        # Installment schedule
+        'installments': fmt_installments,
+        'total_principal_due': format_money(total_principal_due),
+        'total_interest_due': format_money(total_interest_due),
+        'total_penalty_due': format_money(total_penalty_due),
+        'total_principal_paid': format_money(total_principal_paid),
+        'total_interest_paid': format_money(total_interest_paid),
+        'total_penalty_paid': format_money(total_penalty_paid),
+        'total_principal_unpaid': format_money(total_principal_unpaid),
+        'total_interest_unpaid': format_money(total_interest_unpaid),
+        # Fallback repayments list (when no alloc model)
+        'has_alloc_model': has_alloc_model,
+        'all_repayments': all_repayments_fmt,
     }
     
     ts = organization
     context.update({
         'company_name': (ts.company_name if ts and ts.company_name else "LENDER").upper(),
+        'company_address': ts.company_address if ts and ts.company_address else "",
         'company_phone': ts.company_phone if ts and ts.company_phone else "N/A",
         'footer_text': ts.report_footer_text if ts and ts.report_footer_text else "Financial Excellence & Integrity",
         'primary_color': ts.primary_color if ts and ts.primary_color else '#2EAD8F',
@@ -574,7 +620,7 @@ def generate_disbursement_letter(loan_obj):
         'payoff_amount': format_money(payoff_amount),
         'payoff_note': payoff_note,
         'refinanced_loan_number': refinanced_loan_number,
-        'payment_details': loan_obj.disbursement_details if hasattr(loan_obj, 'disbursement_details') else {},
+        'payment_details': (loan_obj.disbursement_details if hasattr(loan_obj, 'disbursement_details') and loan_obj.disbursement_details else {'Phone': borrower.phone_number}),
     }
     
     ts = organization

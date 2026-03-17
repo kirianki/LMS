@@ -9,6 +9,7 @@ Installment order: oldest due-date first (chronic arrears cleared first).
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
+from datetime import timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -56,11 +57,12 @@ class PaymentProcessor:
         }
 
     @staticmethod
-    def _save_installment(installment, penalty_payment, interest_payment, principal_payment):
+    def _save_installment(installment, penalty_payment, interest_payment, principal_payment, payment_date=None, loan=None):
         """Persist per-bucket amounts and recompute aggregate + status."""
         installment.penalty_paid += penalty_payment
         installment.interest_paid += interest_payment
         installment.principal_paid += principal_payment
+
         installment.paid_amount = (
             installment.penalty_paid +
             installment.interest_paid +
@@ -75,12 +77,36 @@ class PaymentProcessor:
 
         installment.save()
 
+    @staticmethod
+    def _waive_on_time_penalties(installment, payment_date, loan):
+        """
+        Check if the payment was made on or before the arrears date (due_date + grace).
+        If so, any remaining penalty for this specific installment should be waived.
+        Returns the waived amount.
+        """
+        if payment_date and hasattr(loan, 'penalty_grace_period'):
+            arrears_date = installment.due_date + timedelta(days=loan.penalty_grace_period)
+            if payment_date <= arrears_date:
+                remaining_penalty = max(Decimal('0'), installment.penalty_due - installment.penalty_paid)
+                if remaining_penalty > 0:
+                    waived_amount = remaining_penalty
+                    installment.penalty_due = installment.penalty_paid
+                    
+                    # Also update loan-level outstanding penalties
+                    loan.outstanding_penalties -= waived_amount
+                    loan.outstanding_balance -= waived_amount
+                    loan.save(update_fields=['outstanding_penalties', 'outstanding_balance'])
+                    
+                    logger.info(f"Waived {waived_amount} penalty for installment {installment.installment_number} due to on-time back-dated payment.")
+                    return waived_amount
+        return Decimal('0')
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     @transaction.atomic
-    def allocate_payment_to_installments(self, loan, amount, payment_date, repayment=None):
+    def allocate_payment_to_installments(self, loan, amount, payment_date=None, repayment=None):
         """
         Allocate payment to installments (oldest-first).
         Priority per installment: Penalty → Interest → Principal.
@@ -105,6 +131,9 @@ class PaymentProcessor:
             if remaining <= 0:
                 break
 
+            # Waive penalties if payment is on-time (back-dated)
+            self._waive_on_time_penalties(installment, payment_date, loan)
+
             result = self._apply_to_installment(installment, remaining)
             remaining = result['remaining']
 
@@ -114,7 +143,7 @@ class PaymentProcessor:
             total_paid_this = penalty_payment + interest_payment + principal_payment
 
             if total_paid_this > 0:
-                self._save_installment(installment, penalty_payment, interest_payment, principal_payment)
+                self._save_installment(installment, penalty_payment, interest_payment, principal_payment, payment_date, loan)
 
             allocation['penalties'] += penalty_payment
             allocation['interest'] += interest_payment
@@ -160,10 +189,22 @@ class PaymentProcessor:
 
         loan = Loan.objects.get(id=loan_id)
 
+        # ---- Back-dating Restriction ----
+        today = timezone.now().date()
+        if payment_date < today:
+            is_admin = user.is_superuser or (
+                hasattr(user, 'role') and user.role and user.role.name in ['Admin', 'Company Administrator', 'System Administrator']
+            )
+            if not is_admin:
+                raise PermissionError("Only administrators can back-date transactions.")
+
         if installment_id:
             # ---- Pay a specific installment --------------------------------
             installment = RepaymentSchedule.objects.get(id=installment_id, loan=loan)
             remaining = Decimal(str(amount))
+
+            # Waive penalties if payment is on-time (back-dated)
+            self._waive_on_time_penalties(installment, payment_date, loan)
 
             result = self._apply_to_installment(installment, remaining)
             penalty_payment = result['penalty']
@@ -171,7 +212,7 @@ class PaymentProcessor:
             principal_payment = result['principal']
             overpayment = result['remaining']
 
-            self._save_installment(installment, penalty_payment, interest_payment, principal_payment)
+            self._save_installment(installment, penalty_payment, interest_payment, principal_payment, payment_date, loan)
 
             allocation = {
                 'principal': principal_payment,

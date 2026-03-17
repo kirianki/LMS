@@ -95,11 +95,14 @@ def send_overdue_payment_reminders():
 @shared_task
 def calculate_loan_penalties():
     """
-    Daily task to calculate and apply penalties for overdue loans.
-    Now automatically handles all organizations via the schedule's relation.
+    Daily task to calculate and apply penalties for overdue loans using an 
+    Incremental Accrual model. This ensures that:
+    1. Penalties only apply at discrete intervals (day/week/month).
+    2. Each penalty unit is calculated based on the principal outstanding AT THAT TIME.
     """
     from apps.loans.models import RepaymentSchedule
     from decimal import Decimal
+    from datetime import date, timedelta
     
     today = date.today()
     
@@ -107,58 +110,68 @@ def calculate_loan_penalties():
     overdue_schedules = RepaymentSchedule.objects.filter(
         status='overdue',
         loan__status='active'
-    ).select_related('loan', 'loan__product')
+    ).select_related('loan')
     
     for schedule in overdue_schedules:
         loan = schedule.loan
-        product = loan.product
         
-        # Check grace period
-        days_overdue = (today - schedule.due_date).days
-        if days_overdue <= loan.penalty_grace_period:
+        # anchor_date is when penalties first start being eligible
+        anchor_date = schedule.due_date + timedelta(days=loan.penalty_grace_period)
+        if today <= anchor_date:
             continue
-        
-        # Calculate penalty using both type and basis
-        penalty_days = days_overdue - loan.penalty_grace_period
-
-        # Determine the penalty base amount
-        if loan.penalty_type == 'percentage':
-            # Calculate based on the UNPAID principal of this specific installment
-            arrears_principal = max(Decimal('0'), schedule.principal_due - schedule.principal_paid)
-            rate = loan.penalty_value / Decimal('100')
-            base_penalty = arrears_principal * rate
-        else:  # fixed
-            base_penalty = loan.penalty_value
-
-        # Apply the basis (how often it accrues)
+            
         basis = getattr(loan, 'penalty_basis', 'per_day')
-        if basis == 'per_installment':
-            # One-off flat fee — does NOT multiply by days
-            total_penalty = base_penalty
-        elif basis == 'per_week':
-            weeks_overdue = Decimal(penalty_days) / Decimal('7')
-            total_penalty = base_penalty * weeks_overdue
+        
+        # Determine period days
+        if basis == 'per_week':
+            period_days = 7
         elif basis == 'per_month':
-            months_overdue = Decimal(penalty_days) / Decimal('30')
-            total_penalty = base_penalty * months_overdue
-        else:  # per_day (default)
-            total_penalty = base_penalty * Decimal(penalty_days)
+            period_days = 30
+        elif basis == 'per_installment':
+            period_days = 0  # Special case: once per installment
+        else: # per_day
+            period_days = 1
 
-        total_penalty = total_penalty.quantize(Decimal('0.01'))
+        new_units = 0
+        if schedule.last_penalty_accrual_date is None:
+            # First time accrual
+            new_units = 1
+            schedule.last_penalty_accrual_date = anchor_date
+        elif period_days > 0:
+            # Subsequent accrual based on time elapsed since last unit was applied
+            days_since_last = (today - schedule.last_penalty_accrual_date).days
+            new_units = days_since_last // period_days
+            
+        if new_units > 0:
+            # Determine the penalty base amount for THIS period
+            if loan.penalty_type == 'percentage':
+                # Calculate based on the CURRENT unpaid principal of this specific installment
+                arrears_principal = max(Decimal('0'), schedule.principal_due - schedule.principal_paid)
+                rate = loan.penalty_value / Decimal('100')
+                unit_penalty = arrears_principal * rate
+            else:  # fixed
+                unit_penalty = loan.penalty_value
 
-        # Update penalty due on schedule
-        if total_penalty > schedule.penalty_due:
-            additional_penalty = total_penalty - schedule.penalty_due
-            schedule.penalty_due = total_penalty
-            schedule.save()
+            additional_penalty = (unit_penalty * Decimal(new_units)).quantize(Decimal('0.01'))
+            
+            if additional_penalty > 0:
+                schedule.penalty_due += additional_penalty
+                
+                # Move the accrual date forward by the number of units applied
+                if period_days > 0:
+                    schedule.last_penalty_accrual_date += timedelta(days=new_units * period_days)
+                else:
+                    # For per_installment, mark as today so it never runs again
+                    schedule.last_penalty_accrual_date = today
+                    
+                schedule.save()
 
-            # Update loan outstanding penalties
-            loan.outstanding_penalties += additional_penalty
-            loan.outstanding_balance += additional_penalty
-            loan.save()
+                # Update loan outstanding penalties
+                loan.outstanding_penalties += additional_penalty
+                loan.outstanding_balance += additional_penalty
+                loan.save()
 
-            logger.info(f"Applied penalty of {additional_penalty} to {loan.loan_number}")
-
+                logger.info(f"Applied incremental penalty of {additional_penalty} to {loan.loan_number} for installment {schedule.installment_number}")
 
 @shared_task
 def process_mpesa_callback(callback_data, organization_id=None):

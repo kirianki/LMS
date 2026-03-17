@@ -48,7 +48,11 @@ class LoanReconciler:
             repayment.overpayment = allocation.get('overpayment', Decimal('0.00'))
             repayment.save()
 
-        # 3. Final synchronization
+            # 3. Synchronize Accounting and Treasury for this repayment
+            from apps.treasury.services.integrity import sync_repayment_financials
+            sync_repayment_financials(repayment)
+
+        # 4. Final synchronization
         loan.sync_schedules()
         
         # Recalculate balances one last time for safety

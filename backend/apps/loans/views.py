@@ -908,6 +908,10 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             if not repayment:
                 return Response({"error": "Repayment not found"}, status=status.HTTP_404_NOT_FOUND)
             
+            # Security: Only admins can delete payments
+            if not (request.user.is_superuser or request.user.groups.filter(name__in=['Administrator', 'Admin']).exists()):
+                return Response({"error": "Only administrators can delete transactions."}, status=status.HTTP_403_FORBIDDEN)
+            
             with transaction.atomic():
                 repayment.delete()
                 from .services.reconciler import LoanReconciler
@@ -926,6 +930,12 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             
             serializer = LoanRepaymentSerializer(repayment, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
+            
+            # Security: Check for back-dating in update
+            new_date = serializer.validated_data.get('payment_date')
+            if new_date and new_date < timezone.now().date():
+                if not (request.user.is_superuser or request.user.groups.filter(name__in=['Administrator', 'Admin']).exists()):
+                    return Response({"error": "Only administrators can back-date transactions."}, status=status.HTTP_403_FORBIDDEN)
             
             with transaction.atomic():
                 serializer.save()

@@ -112,6 +112,12 @@ interface Installment {
     fees_due: number;
     total_due: number;
     penalty_due: number;
+    paid_amount: number;
+    penalty_paid?: number;
+    interest_paid?: number;
+    principal_paid?: number;
+
+    life_balance?: number;
     status: string;
     status_display: string;
 }
@@ -679,18 +685,18 @@ export default function LoanDetailPage() {
                                                         )}
                                                     </div>
                                                     <div className="flex items-center gap-3">
-                                                        <p className="text-sm font-bold text-foreground">
-                                                            P: KES {Number(installment.principal_due).toLocaleString()}
+                                                        <p className={`text-sm font-bold ${Number(installment.principal_paid) > 0 && (Number(installment.principal_due) - Number(installment.principal_paid) <= 0) ? 'text-slate-400 line-through decoration-slate-300' : 'text-foreground'}`}>
+                                                            P: KES {(Number(installment.principal_due) - Number(installment.principal_paid || 0)).toLocaleString()}
                                                         </p>
                                                         <div className="h-1 w-1 rounded-full bg-border" />
-                                                        <p className="text-sm font-bold text-foreground">
-                                                            I: KES {Number(installment.interest_due).toLocaleString()}
+                                                        <p className={`text-sm font-bold ${Number(installment.interest_paid) > 0 && (Number(installment.interest_due) - Number(installment.interest_paid) <= 0) ? 'text-slate-400 line-through decoration-slate-300' : 'text-foreground'}`}>
+                                                            I: KES {(Number(installment.interest_due) - Number(installment.interest_paid || 0)).toLocaleString()}
                                                         </p>
-                                                        {Number(installment.penalty_due) > 0 && (
+                                                        {(Number(installment.penalty_due) > 0 || Number(installment.penalty_paid) > 0) && (
                                                             <>
                                                                 <div className="h-1 w-1 rounded-full bg-border" />
-                                                                <p className="text-sm font-bold text-rose-500">
-                                                                    Pen: KES {Number(installment.penalty_due).toLocaleString()}
+                                                                <p className={`text-sm font-bold ${Number(installment.penalty_paid) > 0 && (Number(installment.penalty_due) - Number(installment.penalty_paid) <= 0) ? 'text-slate-400 line-through decoration-slate-300' : 'text-rose-500'}`}>
+                                                                    Pen: KES {(Number(installment.penalty_due) - Number(installment.penalty_paid || 0)).toLocaleString()}
                                                                 </p>
                                                             </>
                                                         )}
@@ -710,6 +716,11 @@ export default function LoanDetailPage() {
                                                         {installment.status === 'paid' && <CheckCircle2 className="h-3 w-3" />}
                                                         {installment.status_display || installment.status}
                                                     </span>
+                                                    {installment.status !== 'paid' && installment.life_balance !== undefined && (
+                                                        <p className="text-[10px] font-black text-primary uppercase tracking-widest mt-2">
+                                                            Remaining: KES {Number(installment.life_balance).toLocaleString()}
+                                                        </p>
+                                                    )}
                                                 </div>
                                                 {installment.status !== 'paid' && (
                                                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
