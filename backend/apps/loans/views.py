@@ -1534,6 +1534,12 @@ def dashboard_summary(request):
     par_percentage = par_metrics.get('par30_percent', 0)
     par_amount = par_metrics.get('par30_amount', 0)
     
+    # Arrears Buckets
+    par1_30 = active_portfolio_qs.filter(days_in_arrears__gt=0, days_in_arrears__lte=30).aggregate(total=Sum('outstanding_balance'))['total'] or 0
+    par31_60 = active_portfolio_qs.filter(days_in_arrears__gt=30, days_in_arrears__lte=60).aggregate(total=Sum('outstanding_balance'))['total'] or 0
+    par61_90 = active_portfolio_qs.filter(days_in_arrears__gt=60, days_in_arrears__lte=90).aggregate(total=Sum('outstanding_balance'))['total'] or 0
+    par90_plus = active_portfolio_qs.filter(days_in_arrears__gt=90).aggregate(total=Sum('outstanding_balance'))['total'] or 0
+    
     # Arrears: Just use the PAR30 amount as the default Portfolio in Arrears flag
     portfolio_arrears = par_amount
     
@@ -1649,27 +1655,79 @@ def dashboard_summary(request):
 
     # 12. Collections Breakdown (Last 12 Months)
     collections_breakdown = []
+    
+    # New: Monthly/Yearly Finances
+    monthly_finances = []
     for i in range(11, -1, -1):
         c_month_start = (today.replace(day=1) - relativedelta(months=i))
         c_month_end = c_month_start + relativedelta(months=1) - relativedelta(days=1)
         
+        # Monthly disbursements
+        m_disbursed = disbursement_qs.filter(
+            disbursement_date__gte=c_month_start,
+            disbursement_date__lte=c_month_end
+        ).aggregate(total=Sum('disbursed_amount'))['total'] or 0
+
+        # Monthly collections
         c_month_qs = scope_queryset(request.user, LoanRepayment.objects.filter(
             payment_date__gte=c_month_start,
             payment_date__lte=c_month_end
         ))
-        
         c_totals = c_month_qs.aggregate(
             principal=Sum('principal_paid'),
             interest=Sum('interest_paid'),
             penalty=Sum('penalty_paid')
         )
         
+        m_principal = float(c_totals['principal'] or 0)
+        m_interest = float(c_totals['interest'] or 0)
+        m_penalty = float(c_totals['penalty'] or 0)
+        
+        # legacy chart support
         collections_breakdown.append({
             'month': c_month_start.strftime('%b'),
             'year': c_month_start.year,
-            'principal': float(c_totals['principal'] or 0),
-            'interest': float(c_totals['interest'] or 0),
-            'penalty': float(c_totals['penalty'] or 0)
+            'principal': m_principal,
+            'interest': m_interest,
+            'penalty': m_penalty
+        })
+        
+        # New robust table support
+        monthly_finances.append({
+            'period': c_month_start.strftime('%b %Y'),
+            'disbursed': float(m_disbursed),
+            'principal_collected': m_principal,
+            'revenue_collected': m_interest + m_penalty
+        })
+
+    yearly_finances = []
+    current_year = today.year
+    for i in range(4, -1, -1):
+        target_year = current_year - i
+        # Yearly disbursements
+        y_disbursed = disbursement_qs.filter(
+            disbursement_date__year=target_year
+        ).aggregate(total=Sum('disbursed_amount'))['total'] or 0
+
+        # Yearly collections
+        y_c_qs = scope_queryset(request.user, LoanRepayment.objects.filter(
+            payment_date__year=target_year
+        ))
+        y_c_totals = y_c_qs.aggregate(
+            principal=Sum('principal_paid'),
+            interest=Sum('interest_paid'),
+            penalty=Sum('penalty_paid')
+        )
+        
+        y_principal = float(y_c_totals['principal'] or 0)
+        y_interest = float(y_c_totals['interest'] or 0)
+        y_penalty = float(y_c_totals['penalty'] or 0)
+
+        yearly_finances.append({
+            'period': str(target_year),
+            'disbursed': float(y_disbursed),
+            'principal_collected': y_principal,
+            'revenue_collected': y_interest + y_penalty
         })
 
     return Response({
@@ -1677,7 +1735,13 @@ def dashboard_summary(request):
         'portfolio_principal': portfolio_principal,
         'portfolio_interest': portfolio_interest,
         'portfolio_penalties': portfolio_penalties,
-        'portfolio_arrears': portfolio_arrears,
+        'portfolio_arrears': sum([float(par1_30), float(par31_60), float(par61_90), float(par90_plus)]),
+        'arrears_breakdown': {
+            '1_30_days': float(par1_30),
+            '31_60_days': float(par31_60),
+            '61_90_days': float(par61_90),
+            '90_plus_days': float(par90_plus)
+        },
         'active_loans_count': active_loans_count,
         'par_percentage': par_percentage,
         'par_amount': par_amount,
@@ -1705,7 +1769,9 @@ def dashboard_summary(request):
         'total_collections_mtd': float(total_collections_mtd),
         'revenue_mtd': float(revenue_mtd),
         'upcoming_repayments': upcoming_repayments,
-        'collections_breakdown': collections_breakdown
+        'collections_breakdown': collections_breakdown,
+        'monthly_finances': monthly_finances,
+        'yearly_finances': yearly_finances
     })
 
 class LoanGuarantorViewSet(viewsets.ModelViewSet):

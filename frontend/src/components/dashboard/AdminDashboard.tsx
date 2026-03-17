@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Wallet, Users, TrendingUp, AlertCircle, FileText, DollarSign, Activity, UserMinus, Calendar, ArrowRight, Clock } from 'lucide-react';
 import MetricCard from './MetricCard';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
@@ -27,9 +28,19 @@ interface DashboardData {
     revenue_mtd: number;
     upcoming_repayments?: { loan_number: string; amount_due: number; due_date: string; borrower_name: string }[];
     collections_breakdown?: { month: string; year: number; principal: number; interest: number; penalty: number }[];
+    arrears_breakdown?: {
+        '1_30_days': number;
+        '31_60_days': number;
+        '61_90_days': number;
+        '90_plus_days': number;
+    };
+    monthly_finances?: { period: string; disbursed: number; principal_collected: number; revenue_collected: number; }[];
+    yearly_finances?: { period: string; disbursed: number; principal_collected: number; revenue_collected: number; }[];
 }
 
 export default function AdminDashboard({ data }: { data: DashboardData }) {
+    const [financeView, setFinanceView] = useState<'monthly' | 'yearly'>('monthly');
+
     const formatCurrency = (value: number) => {
         return new Intl.NumberFormat('en-KE', {
             style: 'currency',
@@ -45,6 +56,14 @@ export default function AdminDashboard({ data }: { data: DashboardData }) {
         { name: 'Interest', value: data.portfolio_interest || 0, color: '#10b981' }, // Emerald
         { name: 'Penalties', value: data.portfolio_penalties || 0, color: '#f59e0b' }, // Amber
     ].filter(item => item.value > 0);
+
+    const arrearsData = data.arrears_breakdown ? [
+        { name: '1-30 Days', value: data.arrears_breakdown['1_30_days'], color: '#fbbf24' }, // Yellow
+        { name: '31-60 Days', value: data.arrears_breakdown['31_60_days'], color: '#f97316' }, // Orange
+        { name: '61-90 Days', value: data.arrears_breakdown['61_90_days'], color: '#ef4444' }, // Red
+        { name: '90+ Days', value: data.arrears_breakdown['90_plus_days'], color: '#7f1d1d' }, // Dark Red
+    ].filter(item => item.value > 0) : [];
+
 
     return (
         <div className="space-y-8 pb-12">
@@ -218,45 +237,160 @@ export default function AdminDashboard({ data }: { data: DashboardData }) {
             </div>
 
             {/* Collections Breakdown Stacked Bar Chart */}
-            <div className="glass rounded-[2rem] p-8 border border-border flex flex-col hover:shadow-xl hover:shadow-primary/5 transition-all duration-500">
-                <div className="flex items-center gap-3 mb-6 shrink-0">
-                    <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-500 border border-purple-500/20">
-                        <Activity className="h-5 w-5" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="glass rounded-[2rem] p-8 border border-border flex flex-col hover:shadow-xl hover:shadow-primary/5 transition-all duration-500">
+                    <div className="flex items-center gap-3 mb-6 shrink-0">
+                        <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-500 border border-purple-500/20">
+                            <Activity className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-black text-foreground">Collections Breakdown</h3>
+                            <p className="text-xs text-muted-foreground font-medium">Principal, Interest & Penalties (12 Months)</p>
+                        </div>
                     </div>
-                    <div>
-                        <h3 className="text-lg font-black text-foreground">Collections Breakdown</h3>
-                        <p className="text-xs text-muted-foreground font-medium">Principal, Interest & Penalties (12 Months)</p>
+                    <div className="flex-1 w-full h-[350px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={data.collections_breakdown || []} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
+                                <XAxis
+                                    dataKey="month"
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
+                                    dy={10}
+                                />
+                                <YAxis
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tickFormatter={(value) => `K ${value / 1000}k`}
+                                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
+                                    width={65}
+                                />
+                                <Tooltip
+                                    formatter={(value: any, name: any) => [formatCurrency(value as number), name ? String(name).charAt(0).toUpperCase() + String(name).slice(1) : '']}
+                                    cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
+                                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'border: rgba(255, 255, 255, 0.1)', borderRadius: '1rem', color: 'hsl(var(--foreground))', boxShadow: '0 10px 40px -10px rgba(0,0,0,0.3)' }}
+                                />
+                                <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px', fontWeight: 'bold' }} />
+                                <Bar dataKey="principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} maxBarSize={40} />
+                                <Bar dataKey="interest" stackId="a" fill="#10b981" maxBarSize={40} />
+                                <Bar dataKey="penalty" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                            </BarChart>
+                        </ResponsiveContainer>
                     </div>
                 </div>
-                <div className="flex-1 w-full h-[350px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={data.collections_breakdown || []} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
-                            <XAxis
-                                dataKey="month"
-                                axisLine={false}
-                                tickLine={false}
-                                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
-                                dy={10}
-                            />
-                            <YAxis
-                                axisLine={false}
-                                tickLine={false}
-                                tickFormatter={(value) => `K ${value / 1000}k`}
-                                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
-                                width={65}
-                            />
-                            <Tooltip
-                                formatter={(value: any, name: any) => [formatCurrency(value as number), name ? String(name).charAt(0).toUpperCase() + String(name).slice(1) : '']}
-                                cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
-                                contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'border: rgba(255, 255, 255, 0.1)', borderRadius: '1rem', color: 'hsl(var(--foreground))', boxShadow: '0 10px 40px -10px rgba(0,0,0,0.3)' }}
-                            />
-                            <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px', fontWeight: 'bold' }} />
-                            <Bar dataKey="principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} maxBarSize={40} />
-                            <Bar dataKey="interest" stackId="a" fill="#10b981" maxBarSize={40} />
-                            <Bar dataKey="penalty" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                        </BarChart>
-                    </ResponsiveContainer>
+
+                {/* Arrears Aging Breakdown */}
+                <div className="glass rounded-[2rem] p-8 border border-border flex flex-col hover:shadow-xl hover:shadow-primary/5 transition-all duration-500">
+                    <div className="flex items-center gap-3 mb-6 shrink-0">
+                        <div className="p-2.5 rounded-xl bg-red-500/10 text-red-500 border border-red-500/20">
+                            <AlertCircle className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-black text-foreground">Arrears Aging</h3>
+                            <p className="text-xs text-muted-foreground font-medium">Portfolio at Risk Breakdown</p>
+                        </div>
+                    </div>
+                    {arrearsData.length > 0 ? (
+                        <div className="flex-1 w-full h-[350px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={arrearsData} layout="vertical" margin={{ top: 10, right: 30, left: 40, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" opacity={0.5} />
+                                    <XAxis
+                                        type="number"
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tickFormatter={(value) => `K ${value / 1000}k`}
+                                        tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 }}
+                                    />
+                                    <YAxis
+                                        dataKey="name"
+                                        type="category"
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fontSize: 12, fill: 'hsl(var(--foreground))', fontWeight: 'bold' }}
+                                    />
+                                    <Tooltip
+                                        formatter={(value: any) => [formatCurrency(value as number), 'Balance']}
+                                        cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
+                                        contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'border: rgba(255, 255, 255, 0.1)', borderRadius: '1rem', color: 'hsl(var(--foreground))', boxShadow: '0 10px 40px -10px rgba(0,0,0,0.3)' }}
+                                    />
+                                    <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={30}>
+                                        {arrearsData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground opacity-50 font-sans">
+                            <AlertCircle className="h-10 w-10 mb-3 stroke-1 text-emerald-500" />
+                            <p className="text-sm font-medium">No active arrears</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Financial Summary */}
+            <div className="glass rounded-[2rem] p-8 border border-border flex flex-col hover:shadow-xl hover:shadow-primary/5 transition-all duration-500">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 shrink-0 gap-4">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-xl bg-orange-500/10 text-orange-500 border border-orange-500/20">
+                            <DollarSign className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-black text-foreground">Financial Summary</h3>
+                            <p className="text-xs text-muted-foreground font-medium">Disbursements vs Collections</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl border border-border/50">
+                        <button
+                            onClick={() => setFinanceView('monthly')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${financeView === 'monthly' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                        >
+                            Monthly
+                        </button>
+                        <button
+                            onClick={() => setFinanceView('yearly')}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${financeView === 'yearly' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                        >
+                            Yearly
+                        </button>
+                    </div>
+                </div>
+
+                <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="text-xs font-black text-muted-foreground uppercase tracking-wider border-b border-border/50">
+                                <th className="text-left pb-4 px-4 whitespace-nowrap">Period</th>
+                                <th className="text-right pb-4 px-4 whitespace-nowrap">Disbursed (A)</th>
+                                <th className="text-right pb-4 px-4 whitespace-nowrap">Principal Collected (B)</th>
+                                <th className="text-right pb-4 px-4 whitespace-nowrap text-emerald-500">Revenue (Interest + Pen)</th>
+                                <th className="text-right pb-4 px-4 whitespace-nowrap text-blue-500">Net Flow (B-A)</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/50">
+                            {((financeView === 'monthly' ? data.monthly_finances : data.yearly_finances) || []).map((row, idx) => {
+                                const netFlow = row.principal_collected - row.disbursed;
+                                return (
+                                    <tr key={idx} className="group hover:bg-muted/10 transition-colors">
+                                        <td className="py-4 px-4 font-bold text-foreground">{row.period}</td>
+                                        <td className="py-4 px-4 text-right font-medium text-muted-foreground">{formatCurrency(row.disbursed)}</td>
+                                        <td className="py-4 px-4 text-right font-medium text-muted-foreground">{formatCurrency(row.principal_collected)}</td>
+                                        <td className="py-4 px-4 text-right font-black text-emerald-500">{formatCurrency(row.revenue_collected)}</td>
+                                        <td className={`py-4 px-4 text-right font-black ${netFlow >= 0 ? 'text-blue-500' : 'text-red-500'}`}>
+                                            {netFlow >= 0 ? '+' : ''}{formatCurrency(netFlow)}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                            {(!data.monthly_finances && financeView === 'monthly') && (
+                                <tr><td colSpan={5} className="py-12 text-center text-muted-foreground opacity-50">No financial data available</td></tr>
+                            )}
+                        </tbody>
+                    </table>
                 </div>
             </div>
 

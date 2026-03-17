@@ -5,6 +5,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _already_sent_today(loan, message_keyword):
+    """
+    Check if a communication log for this loan containing the specific keyword 
+    was already sent today.
+    """
+    from apps.notifications.models import CommunicationLog
+    from django.utils import timezone
+    
+    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    return CommunicationLog.objects.filter(
+        related_loan=loan,
+        created_at__gte=today_start,
+        content__icontains=message_keyword
+    ).exists()
+
 @shared_task
 def send_upcoming_payment_reminders():
     """
@@ -32,6 +48,11 @@ def send_upcoming_payment_reminders():
         for schedule in upcoming_schedules:
             loan = schedule.loan
             borrower = loan.borrower
+            
+            # Idempotency check: don't send if already sent today
+            if _already_sent_today(loan, "due on"):
+                logger.debug(f"Upcoming reminder for {loan.loan_number} already sent today. Skipping.")
+                continue
             
             # Send SMS
             result = send_loan_reminder_sms(org, borrower, loan, schedule)
@@ -81,6 +102,11 @@ def send_overdue_payment_reminders():
             
             # Send reminder every 3 days for overdue
             if days_overdue % 3 == 0:
+                # Idempotency check: don't send if already sent today
+                if _already_sent_today(loan, "OVERDUE"):
+                    logger.debug(f"Overdue reminder for {loan.loan_number} already sent today. Skipping.")
+                    continue
+
                 # Send SMS
                 result = send_overdue_reminder_sms(org, borrower, loan, schedule, days_overdue)
                 
