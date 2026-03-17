@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Banknote, Calendar, CreditCard, FileText, AlertCircle, CheckCircle2, Wallet } from 'lucide-react';
+import { X, Banknote, Calendar, CreditCard, FileText, AlertCircle, CheckCircle2, Wallet, Info } from 'lucide-react';
 import api from '@/lib/api';
+import { useAuthStore } from '@/store/useAuthStore';
 
 interface RecordPaymentModalProps {
     loan: any;
@@ -13,6 +14,13 @@ interface RecordPaymentModalProps {
 }
 
 export default function RecordPaymentModal({ loan, isOpen, onClose, onSuccess, installment }: RecordPaymentModalProps) {
+    const { user } = useAuthStore();
+    const canBackdate = user?.is_superuser ||
+        user?.role?.name === 'Company Administrator' ||
+        user?.role?.name === 'Admin' ||
+        user?.role?.name === 'Administrator' ||
+        user?.permissions?.includes('loans.add_loanrepayment');
+
     const [formData, setFormData] = useState<any>({
         amount: installment ? (Number(installment.total_due) + Number(installment.penalty_due || 0) - Number(installment.paid_amount)).toString() : '',
         payment_date: new Date().toISOString().split('T')[0],
@@ -131,9 +139,9 @@ export default function RecordPaymentModal({ loan, isOpen, onClose, onSuccess, i
             onSuccess();
             onClose();
             resetForm();
-        } catch (error) {
+        } catch (error: any) {
             console.error('Failed to record payment:', error);
-            alert('Failed to record payment. Please try again.');
+            alert(error.response?.data?.error || 'Failed to record payment. Please try again.');
         } finally {
             setIsSubmitting(false);
         }
@@ -280,11 +288,18 @@ export default function RecordPaymentModal({ loan, isOpen, onClose, onSuccess, i
                                     <input
                                         type="date"
                                         required
+                                        min={!canBackdate ? new Date().toISOString().split('T')[0] : undefined}
                                         value={formData.payment_date}
                                         onChange={(e) => setFormData({ ...formData, payment_date: e.target.value })}
                                         className="w-full bg-muted/50 border border-border rounded-2xl py-4 pl-12 pr-4 text-foreground font-black text-sm focus:outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all shadow-sm"
                                     />
                                 </div>
+                                {canBackdate && (
+                                    <p className="text-[9px] font-bold text-primary ml-2 flex items-center gap-1">
+                                        <Info className="h-3 w-3" />
+                                        Your permissions allow you to select past dates for backdating.
+                                    </p>
+                                )}
                             </div>
 
                             {/* Reference Number */}

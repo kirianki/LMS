@@ -25,7 +25,9 @@ import api from '@/lib/api';
 import { CustomerDocuments } from '@/components/customers/CustomerDocuments';
 import { FinancialStatements } from '@/components/customers/FinancialStatements';
 import MessageModal from '@/components/common/MessageModal';
+import AssignOfficerModal from '@/components/customers/AssignOfficerModal';
 import DataTable from '@/components/ui/DataTable';
+import { useAuthStore } from '@/store/useAuthStore';
 
 interface BorrowerContact {
     id: string;
@@ -75,6 +77,7 @@ interface Borrower {
     created_at: string;
     contacts: BorrowerContact[];
     additional_phones?: BorrowerPhone[];
+    loan_officer?: string;
 }
 
 interface ActivityItem {
@@ -100,6 +103,8 @@ export default function BorrowerDetailPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('overview');
     const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
+    const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+    const { user } = useAuthStore();
 
     useEffect(() => {
         if (!params.id || params.id === 'undefined') return;
@@ -151,6 +156,22 @@ export default function BorrowerDetailPage() {
         } catch (error: any) {
             console.error('Verification failed:', error);
             alert(error.response?.data?.error || 'Verification failed');
+        }
+    };
+
+    const handleOfficerAssigned = async () => {
+        // Refresh borrower after new assignment
+        setIsLoading(true);
+        try {
+            const custRes = await api.get(`/customers/borrowers/${params.id}/`);
+            setBorrower(custRes.data);
+            // Optionally could also re-fetch history feed to show assignment log
+            const historyRes = await api.get(`/customers/borrowers/${params.id}/activity_feed/`);
+            setHistory(historyRes.data);
+        } catch (err) {
+            console.error('Failed to refresh data:', err);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -218,6 +239,15 @@ export default function BorrowerDetailPage() {
                     <MessageSquare className="h-4 w-4" />
                     Send Message
                 </button>
+                {(user?.is_superuser || user?.role?.name === 'Company Administrator' || user?.role?.name === 'Admin' || user?.role?.name === 'Administrator') && (
+                    <button
+                        onClick={() => setIsAssignModalOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-input border border-border text-slate-300 hover:text-foreground transition-colors font-medium border-dashed hover:border-solid hover:border-primary/50"
+                    >
+                        <User className="h-4 w-4" />
+                        Reassign Officer
+                    </button>
+                )}
                 <button
                     onClick={() => router.push(`/borrowers/${params.id}/edit`)}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-input border border-border text-slate-300 hover:text-foreground transition-colors"
@@ -233,6 +263,14 @@ export default function BorrowerDetailPage() {
                     Fetch CRB
                 </button>
             </div>
+
+            <AssignOfficerModal
+                borrowerId={borrower.id}
+                currentOfficerId={borrower.loan_officer as any}
+                isOpen={isAssignModalOpen}
+                onClose={() => setIsAssignModalOpen(false)}
+                onSuccess={handleOfficerAssigned}
+            />
 
             {/* Status Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

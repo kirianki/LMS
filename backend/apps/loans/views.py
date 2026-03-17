@@ -958,6 +958,17 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         notes = serializer.validated_data.get('notes', '')
         installment_id = serializer.validated_data.get('installment_id')
 
+        # Security: Check for back-dating in create
+        if payment_date and payment_date < timezone.now().date():
+            can_backdate = (
+                request.user.is_superuser or 
+                request.user.groups.filter(name__in=['Administrator', 'Admin']).exists() or 
+                (hasattr(request.user, 'role') and request.user.role and request.user.role.name in ['Company Administrator', 'Administrator', 'Admin']) or
+                request.user.has_perm('loans.add_loanrepayment')
+            )
+            if not can_backdate:
+                return Response({"error": "You do not have permission to back-date transactions."}, status=status.HTTP_403_FORBIDDEN)
+
         processor = PaymentProcessor()
         
         # Resolve Cash Account
