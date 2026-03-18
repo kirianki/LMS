@@ -1,0 +1,69 @@
+
+==========================================
+Auditing COA: 1110 - Bank Account (Org: System Settings: Aurum Finance)
+Current COA Balance: 0.00
+  -> WARNING: No CashAccount linked to this COA.
+
+==========================================
+Auditing COA: 1110 - Bank Account (Org: System Settings: Salene credit ltd)
+Current COA Balance: 247826.00
+
+  Linked CashAccount: NCBA Main operations (Org: System Settings: Salene credit ltd)
+  Current Treasury Balance: 324326.00
+  DIFFERENCE (COA - Treasury): -76500.00
+
+  --- Treasury Transactions ---
+  [2026-02-17 14:20] DEBIT  |  200000.00 | loan_disbursement | Ref: sent_previus system | RunBal: -200000.00
+  [2026-02-18 15:44] DEBIT  |   50000.00 | loan_disbursement | Ref: PAID | RunBal: -250000.00
+  [2026-02-18 16:00] CREDIT |   75000.00 | loan_repayment  | Ref: REFI-SETTLE-LN2026020003 | RunBal: -175000.00
+  [2026-02-18 16:00] DEBIT  |  340000.00 | loan_disbursement | Ref: UBGRE6ZY1B | RunBal: -515000.00
+  [2026-02-18 16:00] CREDIT |   60994.00 | fee_income      | Ref: LN2026020003 | RunBal: -454006.00
+  [2026-02-18 16:03] DEBIT  |   28768.00 | expense         | Ref: PAY-EXP-202602-7548 | RunBal: -482774.00
+  [2026-02-18 16:07] DEBIT  |    1500.00 | expense         | Ref: PAY-EXP-202602-8364 | RunBal: -484274.00
+  [2026-02-18 16:55] DEBIT  |  100000.00 | loan_disbursement | Ref: Piaid | RunBal: -584274.00
+  [2026-02-18 17:20] DEBIT  |   37500.00 | loan_disbursement | Ref: paid | RunBal: -621774.00
+  [2026-02-23 11:12] DEBIT  |  300000.00 | loan_disbursement | Ref: UBLRE7GISL | RunBal: -921774.00
+  [2026-02-23 11:12] CREDIT |   33600.00 | fee_income      | Ref: LN2026020006 | RunBal: -888174.00
+  [2026-02-23 11:31] DEBIT  |   50000.00 | loan_disbursement | Ref: Paid | RunBal: -938174.00
+  [2026-02-23 11:39] DEBIT  |    8000.00 | expense         | Ref: PAY-EXP-202602-7556 | RunBal: -946174.00
+  [2026-03-06 06:06] DEBIT  |   15000.00 | loan_disbursement | Ref: UC6RE8O04T | RunBal: -961174.00
+  [2026-03-06 06:06] CREDIT |    4000.00 | fee_income      | Ref: LN2026030001 | RunBal: -957174.00
+  [2026-03-11 08:14] CREDIT |   43000.00 | loan_repayment  | Ref: Cheque | RunBal: -914174.00
+  [2026-03-11 08:16] CREDIT |   49000.00 | loan_repayment  | Ref: 8th cheque | RunBal: -865174.00
+  [2026-03-11 08:18] CREDIT |   15000.00 | loan_repayment  | Ref: UC6JS8HNNE | RunBal: -850174.00
+  [2026-03-16 12:50] CREDIT |   21500.00 | loan_repayment  | Ref: UCGHQ9K8KJ | RunBal: -828674.00
+  [2026-03-17 08:18] CREDIT |   76500.00 | loan_repayment  | Ref: UCC4B9IGPM | RunBal: -752174.00
+
+  --- COA Ledger Entries ---
+  [2026-02-17] CREDIT |  200000.00 | Ref: LN2026020001    | RunBal: -200000.00 | Desc: Loan Disbursement: LN2026020001 to SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-02-17] DEBIT  | 1000000.00 | Ref: OPENING-4ba7a842-f26d-459e-a0f2-a64a2130e5a7 | RunBal: 800000.00 | Desc: Opening balance for treasury account: NCBA Main operations
+  [2026-02-18] CREDIT |   50000.00 | Ref: LN2026020002    | RunBal: 750000.00 | Desc: Loan Disbursement: LN2026020002 to SCL-202602-0002-TG - ANNE WAMBUI WANGONGU
+  [2026-02-18] DEBIT  |   60994.00 | Ref: FEE-LN2026020003 | RunBal: 810994.00 | Desc: Deductions (Withheld): LN2026020003 from SCL-202602-0002-TG - ANNE WAMBUI WANGONGU
+  [2026-02-18] CREDIT |    1500.00 | Ref: EXP-202602-8364 | RunBal: 809494.00 | Desc: Expense Payment: TRACKER TECHNICIAN FEES
+  [2026-02-18] DEBIT  |   75000.00 | Ref: REFI-SETTLE-LN2026020003 | RunBal: 884494.00 | Desc: Loan Repayment: LN2026020002 from SCL-202602-0002-TG - ANNE WAMBUI WANGONGU
+  [2026-02-18] CREDIT |   28768.00 | Ref: EXP-202602-7548 | RunBal: 855726.00 | Desc: Expense Payment: TO PAY PREMIUM FOR KAW388W
+  [2026-02-18] CREDIT |  100000.00 | Ref: LN2026020004    | RunBal: 755726.00 | Desc: Loan Disbursement: LN2026020004 to SCL-202602-0003-71 - JAMES MUNDIA NJOGU
+  [2026-02-18] CREDIT |   37500.00 | Ref: LN2026020005    | RunBal: 718226.00 | Desc: Loan Disbursement: LN2026020005 to SCL-202602-0004-RR - John Gioche Muoge
+  [2026-02-18] CREDIT |  340000.00 | Ref: LN2026020003    | RunBal: 378226.00 | Desc: Refinancing: LN2026020003 pays off LN2026020002
+  [2026-02-23] CREDIT |  300000.00 | Ref: LN2026020006    | RunBal: 78226.00 | Desc: Loan Disbursement: LN2026020006 to SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-02-23] CREDIT |    8000.00 | Ref: EXP-202602-7556 | RunBal: 70226.00 | Desc: Expense Payment: two trackers cost  and labor
+  [2026-02-23] CREDIT |   50000.00 | Ref: LN2026020007    | RunBal: 20226.00 | Desc: Loan Disbursement: LN2026020007 to SCL-202602-0005-R6 - CONNIE KARIMI
+  [2026-02-23] DEBIT  |   33600.00 | Ref: FEE-LN2026020006 | RunBal: 53826.00 | Desc: Deductions (Withheld): LN2026020006 from SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-03-06] CREDIT |   15000.00 | Ref: LN2026030001    | RunBal: 38826.00 | Desc: Loan Disbursement: LN2026030001 to SCL-202603-0001-AG - PAUL KIMAKU MBOTHU
+  [2026-03-06] DEBIT  |    4000.00 | Ref: FEE-LN2026030001 | RunBal: 42826.00 | Desc: Deductions (Withheld): LN2026030001 from SCL-202603-0001-AG - PAUL KIMAKU MBOTHU
+  [2026-03-11] DEBIT  |   49000.00 | Ref: 8th cheque      | RunBal: 91826.00 | Desc: [VOIDED - Incorrect Allocation] Loan Repayment: LN2026020001 from SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-03-11] DEBIT  |   15000.00 | Ref: UC6JS8HNNE      | RunBal: 106826.00 | Desc: [VOIDED - Incorrect Allocation] Loan Repayment: LN2026020007 from SCL-202602-0005-R6 - CONNIE KARIMI
+  [2026-03-11] DEBIT  |   43000.00 | Ref: Cheque          | RunBal: 149826.00 | Desc: [VOIDED - Reallocation] Loan Repayment: LN2026020006 from SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-03-11] DEBIT  |   15000.00 | Ref: UC6JS8HNNE      | RunBal: 164826.00 | Desc: Loan Repayment: LN2026020007 from SCL-202602-0005-R6 - CONNIE KARIMI
+  [2026-03-11] DEBIT  |   43000.00 | Ref: Cheque          | RunBal: 207826.00 | Desc: Loan Repayment: LN2026020006 from SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-03-11] DEBIT  |   43000.00 | Ref: Cheque          | RunBal: 250826.00 | Desc: [VOIDED - Incorrect Allocation] Loan Repayment: LN2026020006 from SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-03-11] DEBIT  |   49000.00 | Ref: 8th cheque      | RunBal: 299826.00 | Desc: [VOIDED - Reallocation] Loan Repayment: LN2026020001 from SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-03-11] DEBIT  |   15000.00 | Ref: UC6JS8HNNE      | RunBal: 314826.00 | Desc: [VOIDED - Reallocation] Loan Repayment: LN2026020007 from SCL-202602-0005-R6 - CONNIE KARIMI
+  [2026-03-11] DEBIT  |   49000.00 | Ref: 8th cheque      | RunBal: 363826.00 | Desc: Loan Repayment: LN2026020001 from SCL-202602-0001-N3 - GEORGE GITIBA NJENGA
+  [2026-03-14] DEBIT  |   76500.00 | Ref: UCC4B9IGPM      | RunBal: 440326.00 | Desc: Loan Repayment: LN2026020003 from SCL-202602-0002-TG - ANNE WAMBUI WANGONGU
+  [2026-03-16] DEBIT  |   21500.00 | Ref: UCGHQ9K8KJ      | RunBal: 461826.00 | Desc: Loan Repayment: LN2026020005 from SCL-202602-0004-RR - JOHN GIOCHE MUOGE
+
+  Final Computed Treasury Balance: -752174.00
+  Final Computed COA Balance: 461826.00
+  Database COA Balance: 247826.00
+  Database Treasury Balance: 324326.00
