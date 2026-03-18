@@ -27,7 +27,7 @@ interface DashboardData {
     total_collections_mtd: number;
     revenue_mtd: number;
     upcoming_repayments?: { loan_number: string; amount_due: number; due_date: string; borrower_name: string }[];
-    collections_breakdown?: { month: string; year: number; principal: number; interest: number; penalty: number }[];
+    collections_breakdown?: { month: string; year: number; principal: number; interest: number; penalty: number; is_forecast?: boolean }[];
     arrears_breakdown?: {
         '1_30_days': number;
         '31_60_days': number;
@@ -244,8 +244,8 @@ export default function AdminDashboard({ data }: { data: DashboardData }) {
                             <Activity className="h-5 w-5" />
                         </div>
                         <div>
-                            <h3 className="text-lg font-black text-foreground">Collections Breakdown</h3>
-                            <p className="text-xs text-muted-foreground font-medium">Principal, Interest & Penalties (12 Months)</p>
+                            <h3 className="text-lg font-black text-foreground">Rolling Collections Window</h3>
+                            <p className="text-xs text-muted-foreground font-medium">6 Months Actual vs 6 Months Forecast</p>
                         </div>
                     </div>
                     <div className="flex-1 w-full h-[350px]">
@@ -267,14 +267,30 @@ export default function AdminDashboard({ data }: { data: DashboardData }) {
                                     width={65}
                                 />
                                 <Tooltip
-                                    formatter={(value: any, name: any) => [formatCurrency(value as number), name ? String(name).charAt(0).toUpperCase() + String(name).slice(1) : '']}
+                                    formatter={(value: any, name: any, props: any) => {
+                                        const label = name ? String(name).charAt(0).toUpperCase() + String(name).slice(1) : '';
+                                        const isForecast = props.payload.is_forecast;
+                                        return [`${formatCurrency(value as number)}${isForecast ? ' (Forecast)' : ''}`, label];
+                                    }}
                                     cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
                                     contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'border: rgba(255, 255, 255, 0.1)', borderRadius: '1rem', color: 'hsl(var(--foreground))', boxShadow: '0 10px 40px -10px rgba(0,0,0,0.3)' }}
                                 />
                                 <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px', fontWeight: 'bold' }} />
-                                <Bar dataKey="principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} maxBarSize={40} />
-                                <Bar dataKey="interest" stackId="a" fill="#10b981" maxBarSize={40} />
-                                <Bar dataKey="penalty" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                                <Bar dataKey="principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} maxBarSize={40}>
+                                    {(data.collections_breakdown || []).map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fillOpacity={entry.is_forecast ? 0.4 : 1} stroke={entry.is_forecast ? '#3b82f6' : 'none'} strokeDasharray={entry.is_forecast ? '4 4' : '0'} />
+                                    ))}
+                                </Bar>
+                                <Bar dataKey="interest" stackId="a" fill="#10b981" maxBarSize={40}>
+                                    {(data.collections_breakdown || []).map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fillOpacity={entry.is_forecast ? 0.4 : 1} stroke={entry.is_forecast ? '#10b981' : 'none'} strokeDasharray={entry.is_forecast ? '4 4' : '0'} />
+                                    ))}
+                                </Bar>
+                                <Bar dataKey="penalty" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                                    {(data.collections_breakdown || []).map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fillOpacity={entry.is_forecast ? 0.4 : 1} stroke={entry.is_forecast ? '#f59e0b' : 'none'} strokeDasharray={entry.is_forecast ? '4 4' : '0'} />
+                                    ))}
+                                </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </div>

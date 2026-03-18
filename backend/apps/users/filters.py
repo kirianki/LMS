@@ -19,7 +19,7 @@ class BranchScopingFilterBackend(filters.BaseFilterBackend):
         if user.is_superuser:
             return queryset
         
-        if hasattr(user, 'role') and user.role and user.role.name in ['Admin', 'System Administrator']:
+        if hasattr(user, 'role') and user.role and user.role.name in ['Admin', 'System Administrator', 'Admin_org']:
             return queryset
 
         # 2. Identify the branch field on the model

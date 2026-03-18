@@ -16,6 +16,12 @@ class Expense(models.Model):
         APPROVED = 'approved', 'Approved'
         REJECTED = 'rejected', 'Rejected'
         PAID = 'paid', 'Paid'
+
+    class ExpenseClass(models.TextChoices):
+        FIXED = 'fixed', 'Fixed (e.g., Rent, Insurance)'
+        RECURRING = 'recurring', 'Recurring (e.g., Utilities, Subscriptions)'
+        VARIABLE = 'variable', 'Variable (e.g., General Supplies)'
+        ONE_TIME = 'one_time', 'One-Time/Ad-hoc'
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey('accounts.Organization', on_delete=models.CASCADE, related_name='expenses', null=True, blank=True)
@@ -29,6 +35,13 @@ class Expense(models.Model):
         limit_choices_to={'account_type': 'expense'},
         help_text="The expense account (e.g., 5100 Operating Expenses)",
         null=True, blank=True
+    )
+    
+    expense_class = models.CharField(
+        max_length=20, 
+        choices=ExpenseClass.choices, 
+        default=ExpenseClass.VARIABLE,
+        help_text="Classification of the expense (e.g., fixed, recurring)"
     )
     
     amount = models.DecimalField(

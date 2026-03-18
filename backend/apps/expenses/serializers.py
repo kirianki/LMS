@@ -6,6 +6,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
     account_code = serializers.ReadOnlyField(source='account.code')
     account_name = serializers.ReadOnlyField(source='account.name')
     status_display = serializers.ReadOnlyField(source='get_status_display')
+    expense_class_display = serializers.ReadOnlyField(source='get_expense_class_display')
     
     class Meta:
         model = Expense

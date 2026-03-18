@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ArrowLeft, Landmark, ArrowUpDown, Clock, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Landmark, ArrowUpDown, Clock, CheckCircle, PlusCircle } from 'lucide-react';
 import DataTable from '@/components/ui/DataTable';
 import api from '@/lib/api';
+import TopUpModal from '@/components/treasury/TopUpModal';
 
 interface Transaction {
     id: string;
@@ -32,22 +33,24 @@ export default function TreasuryAccountDetailPage() {
     const [account, setAccount] = useState<AccountDetails | null>(null);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [showTopUpModal, setShowTopUpModal] = useState(false);
+
+    const fetchDetails = async () => {
+        try {
+            const [accRes, transRes] = await Promise.all([
+                api.get(`/treasury/accounts/${params.id}/`),
+                api.get(`/treasury/transactions/?account=${params.id}`)
+            ]);
+            setAccount(accRes.data);
+            setTransactions(transRes.data.results || transRes.data);
+        } catch (error) {
+            console.error('Failed to fetch treasury details:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchDetails = async () => {
-            try {
-                const [accRes, transRes] = await Promise.all([
-                    api.get(`/treasury/accounts/${params.id}/`),
-                    api.get(`/treasury/transactions/?account=${params.id}`)
-                ]);
-                setAccount(accRes.data);
-                setTransactions(transRes.data.results || transRes.data);
-            } catch (error) {
-                console.error('Failed to fetch treasury details:', error);
-            } finally {
-                setIsLoading(false);
-            }
-        };
         fetchDetails();
     }, [params.id]);
 
@@ -103,16 +106,28 @@ export default function TreasuryAccountDetailPage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center gap-4">
-                <button
-                    onClick={() => router.back()}
-                    className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors"
-                >
-                    <ArrowLeft className="h-5 w-5" />
-                </button>
-                <div>
-                    <h1 className="text-3xl font-bold text-foreground font-heading">{account.name}</h1>
-                    <p className="text-muted-foreground mt-1">{account.bank_name} {account.account_number}</p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                    <button
+                        onClick={() => router.back()}
+                        className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors"
+                    >
+                        <ArrowLeft className="h-5 w-5" />
+                    </button>
+                    <div>
+                        <h1 className="text-3xl font-bold text-foreground font-heading">{account.name}</h1>
+                        <p className="text-muted-foreground mt-1 text-sm">{account.bank_name} {account.account_number}</p>
+                    </div>
+                </div>
+
+                <div className="flex gap-3">
+                    <button
+                        onClick={() => setShowTopUpModal(true)}
+                        className="flex items-center gap-2 px-6 py-3 bg-primary text-white font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all text-sm shadow-xl shadow-primary/20"
+                    >
+                        <PlusCircle className="h-5 w-5" />
+                        Top Up
+                    </button>
                 </div>
             </div>
 
@@ -120,24 +135,24 @@ export default function TreasuryAccountDetailPage() {
                 <div className="glass rounded-xl p-6 border border-border">
                     <div className="flex items-center gap-2 mb-2">
                         <Landmark className="h-4 w-4 text-emerald-400" />
-                        <span className="text-sm text-muted-foreground uppercase tracking-wider">Current Balance</span>
+                        <span className="text-sm text-muted-foreground uppercase tracking-wider font-semibold">Current Balance</span>
                     </div>
-                    <p className="text-3xl font-bold text-foreground tracking-tight">{formatCurrency(account.current_balance)}</p>
+                    <p className="text-3xl font-black text-foreground tracking-tight">{formatCurrency(account.current_balance)}</p>
                 </div>
                 <div className="glass rounded-xl p-6 border border-border">
                     <div className="flex items-center gap-2 mb-2">
                         <Clock className="h-4 w-4 text-primary" />
-                        <span className="text-sm text-muted-foreground uppercase tracking-wider">Total Transactions</span>
+                        <span className="text-sm text-muted-foreground uppercase tracking-wider font-semibold">Total Transactions</span>
                     </div>
-                    <p className="text-3xl font-bold text-foreground tracking-tight">{transactions.length}</p>
+                    <p className="text-3xl font-black text-foreground tracking-tight">{transactions.length}</p>
                 </div>
             </div>
 
-            <div className="glass rounded-xl border border-border overflow-hidden">
+            <div className="glass rounded-xl border border-border overflow-hidden shadow-sm">
                 <div className="p-6 border-b border-border flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <ArrowUpDown className="h-5 w-5 text-primary" />
-                        <h2 className="text-lg font-semibold text-foreground">Transaction History</h2>
+                        <h2 className="text-lg font-bold text-foreground font-heading">Transaction History</h2>
                     </div>
                 </div>
                 <DataTable
@@ -146,6 +161,15 @@ export default function TreasuryAccountDetailPage() {
                     isLoading={isLoading}
                 />
             </div>
+
+            {/* Modals */}
+            <TopUpModal
+                isOpen={showTopUpModal}
+                onClose={() => setShowTopUpModal(false)}
+                onSuccess={() => fetchDetails()}
+                accountId={account.id}
+                accountName={account.name}
+            />
         </div>
     );
 }

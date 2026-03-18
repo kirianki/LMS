@@ -37,6 +37,52 @@ class CashAccountViewSet(TenantScopedViewSet):
             branch=branch
         )
 
+    @action(detail=True, methods=['post'])
+    def top_up(self, request, pk=None):
+        """Simplified account top-up with GL integration."""
+        account = self.get_object()
+        amount = request.data.get('amount')
+        category = request.data.get('category', Transaction.Category.OTHER)
+        counterparty_coa_code = request.data.get('counterparty_coa_code')
+        description = request.data.get('description', f"Top up for {account.name}")
+        reference = request.data.get('reference', '')
+
+        if not amount:
+            return Response({"error": "Amount is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.accounting.models import ChartOfAccount
+        counterparty_coa = None
+        if counterparty_coa_code:
+            counterparty_coa = ChartOfAccount.objects.filter(code=counterparty_coa_code, organization=account.organization).first()
+        
+        # Default counterparty to Capital/Equity (3100) if not provided for top-ups
+        if not counterparty_coa:
+            counterparty_coa = ChartOfAccount.objects.filter(code='3100', organization=account.organization).first()
+
+        from django.db import transaction as db_transaction
+        with db_transaction.atomic():
+            # 1. Create Treasury Transaction
+            trx = Transaction.objects.create(
+                account=account,
+                transaction_type=Transaction.TransactionType.CREDIT,
+                category=category,
+                amount=amount,
+                description=description,
+                reference=reference,
+                counterparty_coa=counterparty_coa,
+                created_by=request.user
+            )
+
+            # 2. GL Posting
+            from .services.integrity import post_manual_treasury_transaction
+            post_manual_treasury_transaction(trx)
+
+        return Response({
+            "status": "Top-up successful",
+            "current_balance": account.current_balance,
+            "transaction_id": trx.id
+        })
+
 
 class TransactionViewSet(TenantScopedViewSet):
     queryset = Transaction.objects.all()

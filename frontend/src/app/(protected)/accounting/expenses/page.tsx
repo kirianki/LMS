@@ -16,6 +16,8 @@ interface Expense {
     date: string;
     vendor: string;
     status: string;
+    expense_class: string;
+    expense_class_display: string;
     created_by: {
         first_name: string;
         last_name: string;
@@ -65,6 +67,22 @@ export default function ExpensesPage() {
         );
     };
 
+    const getClassBadge = (expenseClass: string, display: string) => {
+        const badges = {
+            fixed: 'bg-indigo-500/10 text-indigo-400',
+            recurring: 'bg-purple-500/10 text-purple-400',
+            variable: 'bg-slate-500/10 text-slate-400',
+            one_time: 'bg-pink-500/10 text-pink-400',
+        };
+        const color = badges[expenseClass as keyof typeof badges] || badges.variable;
+
+        return (
+            <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${color} w-fit`}>
+                {display || expenseClass}
+            </span>
+        );
+    };
+
     const formatCurrency = (value: number) => {
         return new Intl.NumberFormat('en-KE', {
             style: 'currency',
@@ -102,6 +120,10 @@ export default function ExpensesPage() {
         {
             header: 'Date',
             accessor: (expense: Expense) => new Date(expense.date).toLocaleDateString(),
+        },
+        {
+            header: 'Class',
+            accessor: (expense: Expense) => getClassBadge(expense.expense_class, expense.expense_class_display),
         },
         {
             header: 'Status',

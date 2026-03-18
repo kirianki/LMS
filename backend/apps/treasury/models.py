@@ -52,8 +52,53 @@ class CashAccount(models.Model):
         ordering = ['name']
 
     def save(self, *args, **kwargs):
-        if not self.id or not CashAccount.objects.filter(pk=self.id).exists():
+        is_new = not self.id or not CashAccount.objects.filter(pk=self.id).exists()
+        if is_new:
             self.current_balance = self.opening_balance
+            
+        # Automatically create or link a COA account
+        if not self.coa_account:
+            from apps.accounting.models import ChartOfAccount
+            
+            # Identify next available code in the 1100-1199 range (Cash & Bank Assets)
+            # 1110 is usually General Bank, 1130 is Mpesa. 
+            # We'll try to find a unique one or use a shared one based on type.
+            code_prefix = '11'
+            if self.account_type == self.AccountType.CASH:
+                code_prefix = '112' # Petty Cash range
+            elif self.account_type == self.AccountType.MOBILE_MONEY:
+                code_prefix = '113' # Mobile Money range
+            else:
+                code_prefix = '111' # Bank range
+            
+            # Find a unique code
+            base_code = code_prefix + '0'
+            existing_codes = list(ChartOfAccount.objects.filter(organization=self.organization, code__startswith=code_prefix).values_list('code', flat=True))
+            
+            if base_code not in existing_codes:
+                final_code = base_code
+            else:
+                # Find next available
+                final_code = base_code
+                for i in range(1, 10):
+                    test_code = f"{code_prefix}{i}"
+                    if test_code not in existing_codes:
+                        final_code = test_code
+                        break
+            
+            # Create the COA
+            coa, created = ChartOfAccount.objects.get_or_create(
+                organization=self.organization,
+                code=final_code,
+                defaults={
+                    'name': self.name,
+                    'account_type': 'asset',
+                    'balance': self.opening_balance,
+                    'description': f"Ledger for Treasury Account: {self.name}"
+                }
+            )
+            self.coa_account = coa
+            
         super().save(*args, **kwargs)
 
 

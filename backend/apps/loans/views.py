@@ -11,7 +11,7 @@ from django.http import FileResponse
 from django.utils import timezone
 from django.db import transaction
 from django.core.files.base import ContentFile
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from dateutil.relativedelta import relativedelta
 import logging
@@ -909,7 +909,12 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
                 return Response({"error": "Repayment not found"}, status=status.HTTP_404_NOT_FOUND)
             
             # Security: Only admins can delete payments
-            if not (request.user.is_superuser or request.user.groups.filter(name__in=['Administrator', 'Admin']).exists()):
+            is_admin = (
+                request.user.is_superuser or 
+                request.user.groups.filter(name__in=['Administrator', 'Admin']).exists() or
+                (hasattr(request.user, 'role') and request.user.role and request.user.role.name in ['Admin', 'Company Administrator', 'System Administrator', 'Admin_org'])
+            )
+            if not is_admin:
                 return Response({"error": "Only administrators can delete transactions."}, status=status.HTTP_403_FORBIDDEN)
             
             with transaction.atomic():
@@ -934,7 +939,12 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             # Security: Check for back-dating in update
             new_date = serializer.validated_data.get('payment_date')
             if new_date and new_date < timezone.now().date():
-                if not (request.user.is_superuser or request.user.groups.filter(name__in=['Administrator', 'Admin']).exists()):
+                is_admin = (
+                    request.user.is_superuser or 
+                    request.user.groups.filter(name__in=['Administrator', 'Admin']).exists() or
+                    (hasattr(request.user, 'role') and request.user.role and request.user.role.name in ['Admin', 'Company Administrator', 'System Administrator', 'Admin_org'])
+                )
+                if not is_admin:
                     return Response({"error": "Only administrators can back-date transactions."}, status=status.HTTP_403_FORBIDDEN)
             
             with transaction.atomic():
@@ -963,7 +973,7 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             can_backdate = (
                 request.user.is_superuser or 
                 request.user.groups.filter(name__in=['Administrator', 'Admin']).exists() or 
-                (hasattr(request.user, 'role') and request.user.role and request.user.role.name in ['Company Administrator', 'Administrator', 'Admin']) or
+                (hasattr(request.user, 'role') and request.user.role and request.user.role.name in ['Company Administrator', 'Administrator', 'Admin', 'Admin_org']) or
                 request.user.has_perm('loans.add_loanrepayment')
             )
             if not can_backdate:
@@ -1234,7 +1244,7 @@ class LoanViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
         
         # Check permissions - require Change Loan permission or System Admin role
         if not (request.user.is_superuser or 
-                (request.user.role and request.user.role.name in ['Admin', 'Company Administrator', 'System Administrator']) or
+                (request.user.role and request.user.role.name in ['Admin', 'Company Administrator', 'System Administrator', 'Admin_org']) or
                 request.user.has_perm('loans.change_loan')):
             return Response({"error": "You do not have permission to update the loan schedule."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -1516,61 +1526,69 @@ def collections_forecast_detail(request):
 
 @api_view(['GET'])
 def dashboard_summary(request):
-    """ Top-level metrics for dashboard cards """
-    from django.db.models import Sum, Count, Avg
+    """Top-level metrics for dashboard cards with optimized aggregations."""
+    from django.db.models import Sum, Count, Avg, Q
+    from django.db.models.functions import TruncMonth
     from apps.customers.models import Borrower
     from apps.users.utils import scope_queryset
+    from dateutil.relativedelta import relativedelta
+    
     user = request.user
     is_super = user.is_superuser
-    
     today = timezone.now().date()
     start_of_month = today.replace(day=1)
-    start_of_month_dt = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    # 1. Active Portfolio (Active & Defaulted)
+    # 1. Base Querysets (Scoped)
     active_statuses = [Loan.Status.ACTIVE, Loan.Status.DEFAULTED]
-    active_portfolio_qs = scope_queryset(request.user, Loan.objects.filter(status__in=active_statuses))
+    loan_qs = scope_queryset(user, Loan.objects.all())
+    active_portfolio_qs = loan_qs.filter(status__in=active_statuses)
+    disbursement_qs = loan_qs.exclude(disbursement_date__isnull=True)
+    borrower_qs = scope_queryset(user, Borrower.objects.all())
+    repayment_qs = scope_queryset(user, LoanRepayment.objects.all())
+
+    # 2. Portfolio Metrics (Single Aggregation)
+    portfolio_stats = active_portfolio_qs.aggregate(
+        total_value=Sum('outstanding_balance'),
+        principal=Sum('outstanding_principal'),
+        interest=Sum('outstanding_interest'),
+        penalties=Sum('outstanding_penalties'),
+        avg_size=Avg('principal_amount'),
+        count=Count('id'),
+        par1_30=Sum('outstanding_balance', filter=Q(days_in_arrears__gt=0, days_in_arrears__lte=30)),
+        par31_60=Sum('outstanding_balance', filter=Q(days_in_arrears__gt=30, days_in_arrears__lte=60)),
+        par61_90=Sum('outstanding_balance', filter=Q(days_in_arrears__gt=60, days_in_arrears__lte=90)),
+        par90_plus=Sum('outstanding_balance', filter=Q(days_in_arrears__gt=90))
+    )
     
-    portfolio_value = active_portfolio_qs.aggregate(total=Sum('outstanding_balance'))['total'] or 0
-    portfolio_principal = active_portfolio_qs.aggregate(total=Sum('outstanding_principal'))['total'] or 0
-    portfolio_interest = active_portfolio_qs.aggregate(total=Sum('outstanding_interest'))['total'] or 0
-    portfolio_penalties = active_portfolio_qs.aggregate(total=Sum('outstanding_penalties'))['total'] or 0
-    active_loans_count = active_portfolio_qs.count()
+    portfolio_value = portfolio_stats['total_value'] or 0
+    portfolio_principal = portfolio_stats['principal'] or 0
+    portfolio_interest = portfolio_stats['interest'] or 0
+    portfolio_penalties = portfolio_stats['penalties'] or 0
+    active_loans_count = portfolio_stats['count']
+    avg_loan_size = portfolio_stats['avg_size'] or 0
     
-    # 2. Avg Loan Size (Principal)
-    avg_loan_size = active_portfolio_qs.aggregate(avg=Avg('principal_amount'))['avg'] or 0
-    
-    # 3. PAR Metrics
+    # Arrears metrics
     par_metrics = calculate_par_metrics()
     par_percentage = par_metrics.get('par30_percent', 0)
     par_amount = par_metrics.get('par30_amount', 0)
     
-    # Arrears Buckets
-    par1_30 = active_portfolio_qs.filter(days_in_arrears__gt=0, days_in_arrears__lte=30).aggregate(total=Sum('outstanding_balance'))['total'] or 0
-    par31_60 = active_portfolio_qs.filter(days_in_arrears__gt=30, days_in_arrears__lte=60).aggregate(total=Sum('outstanding_balance'))['total'] or 0
-    par61_90 = active_portfolio_qs.filter(days_in_arrears__gt=60, days_in_arrears__lte=90).aggregate(total=Sum('outstanding_balance'))['total'] or 0
-    par90_plus = active_portfolio_qs.filter(days_in_arrears__gt=90).aggregate(total=Sum('outstanding_balance'))['total'] or 0
-    
-    # Arrears: Just use the PAR30 amount as the default Portfolio in Arrears flag
-    portfolio_arrears = par_amount
-    
-    # 4. Disbursements
-    disbursement_qs = scope_queryset(request.user, Loan.objects.exclude(disbursement_date__isnull=True))
-    
-    # MTD
-    month_qs = disbursement_qs.filter(
+    par_buckets = {
+        '1_30_days': float(portfolio_stats['par1_30'] or 0),
+        '31_60_days': float(portfolio_stats['par31_60'] or 0),
+        '61_90_days': float(portfolio_stats['par61_90'] or 0),
+        '90_plus_days': float(portfolio_stats['par90_plus'] or 0)
+    }
+    portfolio_arrears = sum(par_buckets.values())
+
+    # 3. Disbursement Metrics (MTD)
+    month_stats = disbursement_qs.filter(
         disbursement_date__gte=start_of_month,
         disbursement_date__lte=today
-    )
-    disbursements_this_month = month_qs.aggregate(total=Sum('disbursed_amount'))['total'] or 0
-    disbursements_count_mtd = month_qs.count()
-    
-    # Today
-    today_qs = disbursement_qs.filter(disbursement_date=today)
-    disbursements_today = today_qs.aggregate(total=Sum('disbursed_amount'))['total'] or 0
-    disbursements_count_today = today_qs.count()
-    
-    # 5. Pending Applications
+    ).aggregate(total=Sum('disbursed_amount'), count=Count('id'))
+    disbursements_this_month = month_stats['total'] or 0
+    disbursements_count_mtd = month_stats['count']
+
+    # 4. Pending Applications
     pending_applications = scope_queryset(request.user, LoanApplication.objects.filter(
         status__in=[
             LoanApplication.Status.SUBMITTED,
@@ -1580,78 +1598,69 @@ def dashboard_summary(request):
     )).count()
 
     # 6. Borrower Metrics
-    borrower_qs = scope_queryset(request.user, Borrower.objects.all())
     total_borrowers = borrower_qs.count()
-    new_borrowers_this_month = borrower_qs.filter(created_at__gte=start_of_month_dt).count()
-    verified_borrowers = borrower_qs.filter(verification_status=Borrower.VerificationStatus.VERIFIED).count()
-    
-    # Active Borrowers: Borrowers with at least one active loan
     active_borrowers = active_portfolio_qs.values('borrower').distinct().count()
-    inactive_borrowers = total_borrowers - active_borrowers
 
     # 7. Portfolio Growth & Trends (Last 6 Months)
-    from dateutil.relativedelta import relativedelta
-    trends = []
-    for i in range(5, -1, -1):
-        month_start = (today.replace(day=1) - relativedelta(months=i))
-        month_end = month_start + relativedelta(months=1) - relativedelta(days=1)
-        
-        month_disbursement = disbursement_qs.filter(
-            disbursement_date__gte=month_start,
-            disbursement_date__lte=month_end
-        ).aggregate(total=Sum('disbursed_amount'))['total'] or 0
-        
-        trends.append({
-            'month': month_start.strftime('%b %Y'),
-            'disbursements': float(month_disbursement)
-        })
+    six_months_ago = start_of_month - relativedelta(months=5)
+    trend_data = disbursement_qs.filter(
+        disbursement_date__gte=six_months_ago
+    ).annotate(
+        month=TruncMonth('disbursement_date')
+    ).values('month').annotate(
+        total=Sum('disbursed_amount')
+    ).order_by('month')
+
+    trends = [{
+        'month': item['month'].strftime('%b %Y'),
+        'disbursements': float(item['total'])
+    } for item in trend_data]
 
     # 8. Branch Performance Breakdown
     branch_performance = []
-    if is_super or (user.role and user.role.name in ['Admin', 'System Administrator']):
+    if is_super or (user.role and user.role.name in ['Admin', 'System Administrator', 'Admin_org']):
         from apps.branches.models import Branch
         for branch in Branch.objects.all():
-            branch_portfolio = Loan.objects.filter(
-                borrower__branch=branch,
-                status__in=active_statuses
-            ).aggregate(total=Sum('outstanding_balance'))['total'] or 0
-            
-            branch_performance.append({
-                'name': branch.name,
-                'portfolio_value': float(branch_portfolio),
-                'active_loans': Loan.objects.filter(borrower__branch=branch, status__in=active_statuses).count()
-            })
+            b_stats = Loan.objects.filter(borrower__branch=branch, status__in=active_statuses).aggregate(
+                total=Sum('outstanding_balance'), count=Count('id')
+            )
+            if b_stats['count'] > 0:
+                branch_performance.append({
+                    'name': branch.name,
+                    'portfolio_value': float(b_stats['total'] or 0),
+                    'active_loans': b_stats['count']
+                })
     
     # 9. Product Performance
     product_performance = []
     products = LoanProduct.objects.filter(is_active=True)
     for product in products:
-        prod_portfolio = active_portfolio_qs.filter(product=product).aggregate(total=Sum('outstanding_balance'))['total'] or 0
-        product_performance.append({
-            'name': product.name,
-            'portfolio_value': float(prod_portfolio),
-            'count': active_portfolio_qs.filter(product=product).count()
-        })
+        prod_stats = active_portfolio_qs.filter(product=product).aggregate(
+            total=Sum('outstanding_balance'), count=Count('id')
+        )
+        if prod_stats['count'] > 0:
+            product_performance.append({
+                'name': product.name,
+                'portfolio_value': float(prod_stats['total'] or 0),
+                'count': prod_stats['count']
+            })
 
     # 10. MTD Collections & Revenue
-    from apps.loans.models import LoanRepayment, RepaymentSchedule
-    repayments_mtd_qs = scope_queryset(request.user, LoanRepayment.objects.filter(
-        payment_date__gte=start_of_month,
-        payment_date__lte=today
-    ))
-    total_collections_mtd = repayments_mtd_qs.aggregate(total=Sum('amount'))['total'] or 0
-    interest_paid_mtd = repayments_mtd_qs.aggregate(total=Sum('interest_paid'))['total'] or 0
-    penalty_paid_mtd = repayments_mtd_qs.aggregate(total=Sum('penalty_paid'))['total'] or 0
-    revenue_mtd = interest_paid_mtd + penalty_paid_mtd
+    repayments_mtd = repayment_qs.filter(payment_date__gte=start_of_month).aggregate(
+        total=Sum('amount'),
+        interest=Sum('interest_paid'),
+        penalty=Sum('penalty_paid')
+    )
+    total_collections_mtd = repayments_mtd['total'] or 0
+    revenue_mtd = (repayments_mtd['interest'] or 0) + (repayments_mtd['penalty'] or 0)
 
     # 11. Upcoming Repayments
-    from datetime import timedelta
-    upcoming_installments = scope_queryset(request.user, RepaymentSchedule.objects.filter(
-        loan__isnull=False,
+    upcoming_installments = RepaymentSchedule.objects.filter(
+        loan__in=loan_qs,
         status__in=['pending', 'partial'],
         due_date__gte=today,
         due_date__lte=today + timedelta(days=7)
-    )).order_by('due_date').select_related('loan', 'loan__borrower')[:5]
+    ).order_by('due_date').select_related('loan', 'loan__borrower')[:5]
     
     upcoming_repayments = []
     for inst in upcoming_installments:
@@ -1664,95 +1673,103 @@ def dashboard_summary(request):
             'borrower_name': b_name or str(borrower)
         })
 
-    # 12. Collections Breakdown (Last 12 Months)
+    # 12. Collections Breakdown: ROLLING WINDOW (6 months past, 6 months future)
     collections_breakdown = []
+    past_6 = start_of_month - relativedelta(months=5)
     
-    # New: Monthly/Yearly Finances
+    actual_data = repayment_qs.filter(
+        payment_date__gte=past_6,
+        payment_date__lte=today
+    ).annotate(
+        month=TruncMonth('payment_date')
+    ).values('month').annotate(
+        p=Sum('principal_paid'),
+        i=Sum('interest_paid'),
+        pen=Sum('penalty_paid')
+    ).order_by('month')
+    
+    actual_map = {item['month'].strftime('%b %Y'): item for item in actual_data}
+    
+    next_month = start_of_month + relativedelta(months=1)
+    end_of_forecast = start_of_month + relativedelta(months=6)
+    forecast_data = RepaymentSchedule.objects.filter(
+        loan__isnull=False,
+        due_date__gte=next_month,
+        due_date__lte=end_of_forecast
+    ).annotate(
+        month=TruncMonth('due_date')
+    ).values('month').annotate(
+        p=Sum('principal_due'),
+        i=Sum('interest_due'),
+        pen=Sum('penalty_due')
+    ).order_by('month')
+    
+    rolling_start = start_of_month - relativedelta(months=5)
+    for i in range(12):
+        target_month = rolling_start + relativedelta(months=i)
+        m_str = target_month.strftime('%b %Y')
+        is_future = target_month >= next_month
+        
+        entry = {
+            'month': target_month.strftime('%b'),
+            'year': target_month.year,
+            'period': m_str,
+            'principal': 0.0, 'interest': 0.0, 'penalty': 0.0,
+            'is_forecast': is_future
+        }
+        
+        if not is_future:
+            if m_str in actual_map:
+                d = actual_map[m_str]
+                entry.update({
+                    'principal': float(d.get('p') or 0),
+                    'interest': float(d.get('i') or 0),
+                    'penalty': float(d.get('pen') or 0)
+                })
+        else:
+            f_item = next((x for x in forecast_data if x['month'].strftime('%b %Y') == m_str), None)
+            if f_item:
+                entry.update({
+                    'principal': float(f_item.get('p') or 0),
+                    'interest': float(f_item.get('i') or 0),
+                    'penalty': float(f_item.get('pen') or 0)
+                })
+        
+        collections_breakdown.append(entry)
+
+    # 13. Financial Summary Table
+    fin_disbursed = disbursement_qs.filter(disbursement_date__gte=rolling_start).annotate(
+        month=TruncMonth('disbursement_date')
+    ).values('month').annotate(total=Sum('disbursed_amount'))
+    disb_map = {item['month'].strftime('%b %Y'): item for item in fin_disbursed}
+    
     monthly_finances = []
-    for i in range(11, -1, -1):
-        c_month_start = (today.replace(day=1) - relativedelta(months=i))
-        c_month_end = c_month_start + relativedelta(months=1) - relativedelta(days=1)
+    for i in range(12):
+        target = rolling_start + relativedelta(months=i)
+        if target > today: continue
+        m_str = target.strftime('%b %Y')
+        f_data = actual_map.get(m_str, {})
+        d_data = disb_map.get(m_str, {})
+        m_p = float(f_data.get('p') or 0)
+        m_i = float(f_data.get('i') or 0)
+        m_pen = float(f_data.get('pen') or 0)
+        m_disb = float(d_data.get('total') or 0)
         
-        # Monthly disbursements
-        m_disbursed = disbursement_qs.filter(
-            disbursement_date__gte=c_month_start,
-            disbursement_date__lte=c_month_end
-        ).aggregate(total=Sum('disbursed_amount'))['total'] or 0
-
-        # Monthly collections
-        c_month_qs = scope_queryset(request.user, LoanRepayment.objects.filter(
-            payment_date__gte=c_month_start,
-            payment_date__lte=c_month_end
-        ))
-        c_totals = c_month_qs.aggregate(
-            principal=Sum('principal_paid'),
-            interest=Sum('interest_paid'),
-            penalty=Sum('penalty_paid')
-        )
-        
-        m_principal = float(c_totals['principal'] or 0)
-        m_interest = float(c_totals['interest'] or 0)
-        m_penalty = float(c_totals['penalty'] or 0)
-        
-        # legacy chart support
-        collections_breakdown.append({
-            'month': c_month_start.strftime('%b'),
-            'year': c_month_start.year,
-            'principal': m_principal,
-            'interest': m_interest,
-            'penalty': m_penalty
-        })
-        
-        # New robust table support
         monthly_finances.append({
-            'period': c_month_start.strftime('%b %Y'),
-            'disbursed': float(m_disbursed),
-            'principal_collected': m_principal,
-            'revenue_collected': m_interest + m_penalty
+            'period': m_str,
+            'disbursed': m_disb,
+            'principal_collected': m_p,
+            'revenue_collected': m_i + m_pen
         })
-
-    yearly_finances = []
-    current_year = today.year
-    for i in range(4, -1, -1):
-        target_year = current_year - i
-        # Yearly disbursements
-        y_disbursed = disbursement_qs.filter(
-            disbursement_date__year=target_year
-        ).aggregate(total=Sum('disbursed_amount'))['total'] or 0
-
-        # Yearly collections
-        y_c_qs = scope_queryset(request.user, LoanRepayment.objects.filter(
-            payment_date__year=target_year
-        ))
-        y_c_totals = y_c_qs.aggregate(
-            principal=Sum('principal_paid'),
-            interest=Sum('interest_paid'),
-            penalty=Sum('penalty_paid')
-        )
-        
-        y_principal = float(y_c_totals['principal'] or 0)
-        y_interest = float(y_c_totals['interest'] or 0)
-        y_penalty = float(y_c_totals['penalty'] or 0)
-
-        yearly_finances.append({
-            'period': str(target_year),
-            'disbursed': float(y_disbursed),
-            'principal_collected': y_principal,
-            'revenue_collected': y_interest + y_penalty
-        })
+    monthly_finances.reverse()
 
     return Response({
         'portfolio_value': portfolio_value,
         'portfolio_principal': portfolio_principal,
         'portfolio_interest': portfolio_interest,
         'portfolio_penalties': portfolio_penalties,
-        'portfolio_arrears': sum([float(par1_30), float(par31_60), float(par61_90), float(par90_plus)]),
-        'arrears_breakdown': {
-            '1_30_days': float(par1_30),
-            '31_60_days': float(par31_60),
-            '61_90_days': float(par61_90),
-            '90_plus_days': float(par90_plus)
-        },
+        'portfolio_arrears': portfolio_arrears,
+        'arrears_breakdown': par_buckets,
         'active_loans_count': active_loans_count,
         'par_percentage': par_percentage,
         'par_amount': par_amount,
@@ -1760,16 +1777,11 @@ def dashboard_summary(request):
         'disbursements_this_month': disbursements_this_month,
         'disbursements_count_mtd': disbursements_count_mtd,
         
-        'disbursements_today': disbursements_today,
-        'disbursements_count': disbursements_count_today,
-        
         'pending_applications': pending_applications,
         'avg_loan_size': avg_loan_size,
         'total_borrowers': total_borrowers,
-        'new_borrowers_this_month': new_borrowers_this_month,
-        'verified_borrowers': verified_borrowers,
         'active_borrowers': active_borrowers,
-        'inactive_borrowers': inactive_borrowers,
+        'inactive_borrowers': total_borrowers - active_borrowers,
         
         'trends': trends,
         'branch_performance': branch_performance,
@@ -1781,8 +1793,7 @@ def dashboard_summary(request):
         'revenue_mtd': float(revenue_mtd),
         'upcoming_repayments': upcoming_repayments,
         'collections_breakdown': collections_breakdown,
-        'monthly_finances': monthly_finances,
-        'yearly_finances': yearly_finances
+        'monthly_finances': monthly_finances
     })
 
 class LoanGuarantorViewSet(viewsets.ModelViewSet):

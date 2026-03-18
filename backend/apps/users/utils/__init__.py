@@ -7,7 +7,7 @@ def scope_queryset(user, queryset):
     if user.is_superuser:
         return queryset
     
-    if hasattr(user, 'role') and user.role and user.role.name in ['Admin', 'System Administrator']:
+    if hasattr(user, 'role') and user.role and user.role.name in ['Admin', 'System Administrator', 'Admin_org']:
         return queryset
 
     # Get user's assigned branch

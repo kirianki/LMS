@@ -32,15 +32,29 @@ def update_customer_scoring_on_repayment(sender, instance, created, **kwargs):
             
         borrower.save()
 @receiver(post_save, sender=LoanRepayment)
-def sync_schedules_on_repayment(sender, instance, created, **kwargs):
+def sync_loan_on_repayment(sender, instance, created, **kwargs):
     """
-    Automatically synchronize repayment schedules whenever a payment is recorded.
-    Ensures the UI reflects the correct status (Paid/Partial/Overdue) after any payment.
+    Ensure all loan metrics, schedules, and COA are updated in real-time.
     """
     if created:
         loan = instance.loan
+        # 1. Sync Repayment Schedules
         loan.sync_schedules()
         
-        # Recalculate arrears immediately upon payment
+        # 2. Recalculate Arrears
         from .services.arrears import calculate_loan_arrears_status
         calculate_loan_arrears_status(loan)
+        
+        # 3. Hard-sync COA Balances
+        loan.sync_balances_to_coa()
+
+from .models import Loan
+@receiver(post_save, sender=Loan)
+def sync_coa_on_loan_change(sender, instance, created, **kwargs):
+    """
+    Ensure COA is updated if loan status or balances change manually.
+    """
+    if not created:
+        # Only sync for active/defaulted loans
+        if instance.status in ['active', 'defaulted']:
+            instance.sync_balances_to_coa()

@@ -25,6 +25,19 @@ class Command(BaseCommand):
         else:
             self.stdout.write(f'Role {company_admin_role.name} already exists.')
 
+        # 2. Create Admin_org Role
+        admin_org_role, created = Role.objects.get_or_create(
+            name='Admin_org',
+            defaults={
+                'description': 'Organization-level administrator with full system permissions.',
+                'is_system_role': True
+            }
+        )
+        if created:
+            self.stdout.write(self.style.SUCCESS(f'Created role: {admin_org_role.name}'))
+        else:
+            self.stdout.write(f'Role {admin_org_role.name} already exists.')
+
         # 2. Identify Functional Permissions
         # We exclude technical/system apps
         excluded_apps = [

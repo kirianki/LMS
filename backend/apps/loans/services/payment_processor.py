@@ -193,7 +193,7 @@ class PaymentProcessor:
         today = timezone.now().date()
         if payment_date < today:
             is_admin = user.is_superuser or (
-                hasattr(user, 'role') and user.role and user.role.name in ['Admin', 'Company Administrator', 'System Administrator']
+                hasattr(user, 'role') and user.role and user.role.name in ['Admin', 'Company Administrator', 'System Administrator', 'Admin_org']
             )
             if not is_admin:
                 raise PermissionError("Only administrators can back-date transactions.")
@@ -249,6 +249,116 @@ class PaymentProcessor:
         )
 
         logger.info(f"Manual payment recorded for loan {loan.loan_number}: {amount}")
+        return repayment
+
+    @transaction.atomic
+    def void_repayment(self, repayment_id, user, notes=''):
+        """
+        Void an existing repayment, reversing all balance impacts and creating
+        a reversal journal entry in the GL.
+        """
+        from ..models import LoanRepayment, RepaymentSchedule
+        from apps.accounting.services import create_double_entry
+        from apps.accounting.models import JournalEntry, LedgerEntry
+
+        repayment = LoanRepayment.objects.select_for_update().get(id=repayment_id)
+        if repayment.status == 'voided':
+            raise ValueError("Repayment is already voided.")
+
+        loan = repayment.loan
+        
+        # 1. Reverse Loan Balances
+        loan.outstanding_principal += repayment.principal_paid
+        loan.outstanding_interest += repayment.interest_paid
+        loan.outstanding_penalties += repayment.penalty_paid
+        loan.outstanding_balance = (
+            loan.outstanding_principal +
+            loan.outstanding_interest +
+            loan.outstanding_penalties
+        )
+        
+        if loan.status == 'paid_off' and loan.outstanding_balance > 0:
+            loan.status = 'active'
+            loan.closed_at = None
+            
+        loan.save()
+
+        # 2. Reverse Installment Progress
+        # We need to find which installments this repayment touched. 
+        # Since we don't have a direct M2M, we re-sync based on remaining balance
+        # or we could have stored the allocation. 
+        # For now, we restore the principal/interest/penalty paid on installments
+        # that were likely touched (those with paid_amount > 0 and recently updated).
+        # Actually, the most robust way is to re-sync all schedules for this loan.
+        
+        # We'll re-calculate installment 'paid' fields by subtracting the revoked amount
+        # starting from the newest paid installments (Last-In-First-Out reversal).
+        rev_p = repayment.principal_paid
+        rev_i = repayment.interest_paid
+        rev_pen = repayment.penalty_paid
+        
+        installments = loan.schedules.filter(paid_amount__gt=0).order_by('-due_date')
+        for inst in installments:
+            # Reverse Penalty
+            p_to_rev = min(inst.penalty_paid, rev_pen)
+            inst.penalty_paid -= p_to_rev
+            rev_pen -= p_to_rev
+            
+            # Reverse Interest
+            i_to_rev = min(inst.interest_paid, rev_i)
+            inst.interest_paid -= i_to_rev
+            rev_i -= i_to_rev
+            
+            # Reverse Principal
+            pr_to_rev = min(inst.principal_paid, rev_p)
+            inst.principal_paid -= pr_to_rev
+            rev_p -= pr_to_rev
+            
+            inst.paid_amount = inst.principal_paid + inst.interest_paid + inst.penalty_paid
+            if inst.paid_amount <= 0:
+                inst.status = 'pending' # Or 'overdue' if due_date < today
+                if inst.due_date < timezone.now().date():
+                    inst.status = 'overdue'
+            else:
+                inst.status = 'partial'
+            inst.save()
+
+        # 3. Create Accounting Reversal
+        # We find the original journal entry if possible, or just create an offsetting one.
+        original_journal = JournalEntry.objects.filter(reference=repayment.reference_number).first()
+        
+        # Reversal: Debit Income/Receivable, Credit Cash
+        # Actually: Debit 1210 (Principal), Debit 1220 (Interest), Credit Cash (1110)
+        # Note: We use 1210 and 1220 as they are the receivables.
+        debits = []
+        if repayment.principal_paid > 0: debits.append(('1210', repayment.principal_paid))
+        if repayment.interest_paid > 0: debits.append(('4100', repayment.interest_paid)) # Credit Income was used, so Debit Income to reverse
+        if repayment.penalty_paid > 0: debits.append(('4300', repayment.penalty_paid))
+        
+        total_rev = sum(amt for _, amt in debits)
+        
+        if total_rev > 0:
+            create_double_entry(
+                date=timezone.now().date(),
+                description=f"VOID REPAYMENT: {repayment.reference_number} for {loan.loan_number}",
+                reference=f"VOID-{repayment.reference_number}",
+                debits=debits,
+                credits=[('1110', total_rev)],
+                organization=loan.organization,
+                created_by=user
+            )
+
+        # 4. Mark Repayment as Voided
+        repayment.status = 'voided'
+        repayment.voided_at = timezone.now()
+        repayment.voided_by = user
+        repayment.notes = f"{repayment.notes}\nVOIDED by {user.get_full_name()} on {timezone.now()}: {notes}"
+        repayment.save()
+
+        # Final Sync
+        loan.sync_schedules()
+        
+        logger.info(f"Repayment {repayment.reference_number} voided by {user}")
         return repayment
 
     # ------------------------------------------------------------------

@@ -22,7 +22,7 @@ interface DashboardData {
     inactive_borrowers: number;
     trends?: { month: string; disbursements: number }[];
     product_performance?: { name: string; portfolio_value: number; count: number }[];
-    collections_breakdown?: { month: string; year: number; principal: number; interest: number; penalty: number }[];
+    collections_breakdown?: { month: string; year: number; principal: number; interest: number; penalty: number; is_forecast?: boolean }[];
 }
 
 export default function BranchDashboard({ data, branchName }: { data: DashboardData, branchName?: string }) {
@@ -224,7 +224,7 @@ export default function BranchDashboard({ data, branchName }: { data: DashboardD
                 </div>
 
                 <div className="glass rounded-xl p-6 border border-border">
-                    <h3 className="text-lg font-semibold text-foreground mb-4">Collections Breakdown</h3>
+                    <h3 className="text-lg font-semibold text-foreground mb-4">Rolling Collections Window</h3>
                     <div className="h-[250px] w-full">
                         <ResponsiveContainer width="100%" height="100%" minHeight={0}>
                             <BarChart data={data.collections_breakdown || []} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
@@ -244,14 +244,30 @@ export default function BranchDashboard({ data, branchName }: { data: DashboardD
                                     width={65}
                                 />
                                 <Tooltip
-                                    formatter={(value: any, name: any) => [formatCurrency(value as number), name ? String(name).charAt(0).toUpperCase() + String(name).slice(1) : '']}
+                                    formatter={(value: any, name: any, props: any) => {
+                                        const label = name ? String(name).charAt(0).toUpperCase() + String(name).slice(1) : '';
+                                        const isForecast = props.payload.is_forecast;
+                                        return [`${formatCurrency(value as number)}${isForecast ? ' (Forecast)' : ''}`, label];
+                                    }}
                                     cursor={{ fill: 'hsl(var(--muted))', opacity: 0.4 }}
                                     contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '0.5rem', color: 'hsl(var(--foreground))' }}
                                 />
                                 <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px' }} />
-                                <Bar dataKey="principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} />
-                                <Bar dataKey="interest" stackId="a" fill="#10b981" />
-                                <Bar dataKey="penalty" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                                <Bar dataKey="principal" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]}>
+                                    {(data.collections_breakdown || []).map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fillOpacity={entry.is_forecast ? 0.4 : 1} stroke={entry.is_forecast ? '#3b82f6' : 'none'} strokeDasharray={entry.is_forecast ? '4 4' : '0'} />
+                                    ))}
+                                </Bar>
+                                <Bar dataKey="interest" stackId="a" fill="#10b981">
+                                    {(data.collections_breakdown || []).map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fillOpacity={entry.is_forecast ? 0.4 : 1} stroke={entry.is_forecast ? '#10b981' : 'none'} strokeDasharray={entry.is_forecast ? '4 4' : '0'} />
+                                    ))}
+                                </Bar>
+                                <Bar dataKey="penalty" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]}>
+                                    {(data.collections_breakdown || []).map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fillOpacity={entry.is_forecast ? 0.4 : 1} stroke={entry.is_forecast ? '#f59e0b' : 'none'} strokeDasharray={entry.is_forecast ? '4 4' : '0'} />
+                                    ))}
+                                </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </div>

@@ -19,6 +19,8 @@ interface Expense {
     approved_at: string;
     status_display: string;
     receipt: string | null;
+    expense_class: string;
+    expense_class_display: string;
 }
 
 interface CashAccount {
@@ -197,7 +199,7 @@ export default function ExpenseDetailPage() {
                             <p className="text-lg text-foreground leading-relaxed">{expense.description}</p>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-8 pt-8 border-t border-border">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-8 border-t border-border">
                             <div>
                                 <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Expense Account</h3>
                                 <div className="flex items-center gap-2 text-foreground">
@@ -211,6 +213,33 @@ export default function ExpenseDetailPage() {
                                     <User className="h-4 w-4 text-primary" />
                                     <span className="font-semibold">{expense.vendor || 'N/A'}</span>
                                 </div>
+                            </div>
+                            <div>
+                                <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Expense Class</h3>
+                                <select
+                                    value={expense.expense_class || 'variable'}
+                                    disabled={expense.status === 'paid' || isActioning}
+                                    onChange={async (e) => {
+                                        setIsActioning(true);
+                                        try {
+                                            const newClass = e.target.value;
+                                            await api.patch(`/expenses/expenses/${params.id}/`, {
+                                                expense_class: newClass
+                                            });
+                                            setExpense(prev => prev ? { ...prev, expense_class: newClass, expense_class_display: newClass } : null);
+                                        } catch (err) {
+                                            console.error('Failed to update class', err);
+                                        } finally {
+                                            setIsActioning(false);
+                                        }
+                                    }}
+                                    className="bg-input border border-border rounded-lg px-2 py-1 text-sm focus:ring-1 focus:ring-primary outline-none text-foreground w-full font-semibold"
+                                >
+                                    <option value="fixed">Fixed (Rent, etc.)</option>
+                                    <option value="recurring">Recurring (Utilities)</option>
+                                    <option value="variable">Variable (Supplies)</option>
+                                    <option value="one_time">One-Time / Ad-Hoc</option>
+                                </select>
                             </div>
                         </div>
                     </div>

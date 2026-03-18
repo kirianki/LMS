@@ -220,10 +220,25 @@ def generate_profit_loss(start_date, end_date, organization=None):
     }
 
 def generate_general_ledger(account_id=None, start_date=None, end_date=None, organization=None):
-    """Detailed transaction history for specific account(s)."""
+    """Detailed transaction history for specific account(s), including children for parent accounts."""
     
+    def get_all_descendant_accounts(account):
+        """Recursively get all active child accounts."""
+        descendants = [account]
+        for child in account.children.filter(is_active=True):
+            descendants.extend(get_all_descendant_accounts(child))
+        return descendants
+
     def get_single_account_ledger(account):
-        entries = LedgerEntry.objects.filter(account=account, is_posted=True).order_by('journal_entry__date', 'journal_entry__created_at')
+        # Determine if we need to include children
+        # Usually, if we specify an account, the user wants to see everything under it
+        all_accounts = get_all_descendant_accounts(account)
+        account_ids = [acc.id for acc in all_accounts]
+        
+        entries = LedgerEntry.objects.filter(
+            account_id__in=account_ids, 
+            is_posted=True
+        ).select_related('journal_entry', 'account').order_by('journal_entry__date', 'journal_entry__created_at')
         
         if start_date:
             entries = entries.filter(journal_entry__date__gte=start_date)
@@ -234,23 +249,34 @@ def generate_general_ledger(account_id=None, start_date=None, end_date=None, org
         running_balance = Decimal('0.00')
         
         if start_date:
-            prior_entries = LedgerEntry.objects.filter(account=account, is_posted=True, journal_entry__date__lt=start_date)
-            p_debits = prior_entries.filter(entry_type='debit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
-            p_credits = prior_entries.filter(entry_type='credit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+            prior_entries = LedgerEntry.objects.filter(
+                account_id__in=account_ids, 
+                is_posted=True, 
+                journal_entry__date__lt=start_date
+            )
             
-            if account.account_type in ['asset', 'expense']:
-                running_balance = p_debits - p_credits
-            else:
-                running_balance = p_credits - p_debits
+            # For aggregated opening balance, we sum based on account type
+            # Note: This assumes all accounts in the group have the same normal balance type
+            # (which is usually true for a COA hierarchy like Assets)
+            for acc in all_accounts:
+                p_entries = prior_entries.filter(account=acc)
+                p_debits = p_entries.filter(entry_type='debit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+                p_credits = p_entries.filter(entry_type='credit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+                
+                if acc.account_type in ['asset', 'expense']:
+                    running_balance += (p_debits - p_credits)
+                else:
+                    running_balance += (p_credits - p_debits)
 
         for entry in entries:
+            acc_type = entry.account.account_type
             if entry.entry_type == 'debit':
-                if account.account_type in ['asset', 'expense']:
+                if acc_type in ['asset', 'expense']:
                     running_balance += entry.amount
                 else:
                     running_balance -= entry.amount
             else: # credit
-                if account.account_type in ['asset', 'expense']:
+                if acc_type in ['asset', 'expense']:
                     running_balance -= entry.amount
                 else:
                     running_balance += entry.amount
@@ -260,6 +286,8 @@ def generate_general_ledger(account_id=None, start_date=None, end_date=None, org
                 'date': entry.journal_entry.date,
                 'description': entry.journal_entry.description,
                 'reference': entry.journal_entry.reference,
+                'account_code': entry.account.code, # Added for multi-account view
+                'account_name': entry.account.name,
                 'debit': entry.amount if entry.entry_type == 'debit' else Decimal('0.00'),
                 'credit': entry.amount if entry.entry_type == 'credit' else Decimal('0.00'),
                 'balance': running_balance
@@ -270,6 +298,7 @@ def generate_general_ledger(account_id=None, start_date=None, end_date=None, org
             'account_name': account.name,
             'account_code': account.code,
             'account_type': account.account_type,
+            'is_parent': account.children.filter(is_active=True).exists(),
             'opening_balance': running_balance - (sum(e['debit'] for e in history) - sum(e['credit'] for e in history)) if account.account_type in ['asset', 'expense'] else running_balance - (sum(e['credit'] for e in history) - sum(e['debit'] for e in history)),
             'history': history,
             'closing_balance': running_balance
@@ -283,19 +312,63 @@ def generate_general_ledger(account_id=None, start_date=None, end_date=None, org
     accounts = ChartOfAccount.objects.filter(is_active=True).order_by('code')
     if organization:
         accounts = accounts.filter(organization=organization)
+    
+    # In bulk mode, we probably want to skip parent accounts to avoid double-counting
+    # OR we show them but explicitly separate them.
+    # Usually, GL "All Accounts" shows only leaf nodes or transactions directly in them.
+    # If the user wants to see the tree, they use the summary reports.
+    
     all_ledgers = []
     total_opening = Decimal('0.00')
     total_closing = Decimal('0.00')
     
     for acc in accounts:
+        # In bulk mode, we ONLY load leaf accounts to avoid redundancy
+        # if acc.children.filter(is_active=True).exists():
+        #     continue
+            
         # Only include if has transactions or non-zero balance
         if LedgerEntry.objects.filter(account=acc).exists() or acc.balance != 0:
-            ledger = get_single_account_ledger(acc)
-            all_ledgers.append(ledger)
-            # Note: Totals might not be meaningful across different account types 
-            # without proper sign conversions, but we return them for summary
-            total_opening += ledger['opening_balance']
-            total_closing += ledger['closing_balance']
+            # We bypass the child collection for bulk mode to keep it standard
+            # But the single_account_ledger above NOW includes children.
+            # So for bulk, we might want a simpler version or just be careful.
+            
+            # Refactoring get_single_account_ledger to be more flexible:
+            # For now, let's allow bulk mode to stay as it was (per-account).
+            
+            entries = LedgerEntry.objects.filter(account=acc, is_posted=True).order_by('journal_entry__date', 'journal_entry__created_at')
+            if start_date: entries = entries.filter(journal_entry__date__gte=start_date)
+            if end_date: entries = entries.filter(journal_entry__date__lte=end_date)
+            
+            if entries.exists() or acc.balance != 0:
+                # Reuse the logic but without descendants for bulk
+                history = []
+                cur_bal = Decimal('0.00')
+                if start_date:
+                    prior = LedgerEntry.objects.filter(account=acc, is_posted=True, journal_entry__date__lt=start_date)
+                    p_d = prior.filter(entry_type='debit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+                    p_c = prior.filter(entry_type='credit').aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+                    cur_bal = (p_d - p_c) if acc.account_type in ['asset', 'expense'] else (p_c - p_d)
+                
+                op_bal = cur_bal
+                for e in entries:
+                    if e.entry_type == 'debit':
+                        cur_bal += e.amount if acc.account_type in ['asset', 'expense'] else -e.amount
+                    else:
+                        cur_bal -= e.amount if acc.account_type in ['asset', 'expense'] else -e.amount
+                    history.append({
+                        'id': str(e.id), 'date': e.journal_entry.date, 'description': e.journal_entry.description,
+                        'reference': e.journal_entry.reference, 'debit': e.amount if e.entry_type == 'debit' else 0,
+                        'credit': e.amount if e.entry_type == 'credit' else 0, 'balance': cur_bal
+                    })
+                
+                ledger = {
+                    'account_id': str(acc.id), 'account_name': acc.name, 'account_code': acc.code,
+                    'opening_balance': op_bal, 'history': history, 'closing_balance': cur_bal
+                }
+                all_ledgers.append(ledger)
+                total_opening += op_bal
+                total_closing += cur_bal
             
     return {
         'is_bulk': True,

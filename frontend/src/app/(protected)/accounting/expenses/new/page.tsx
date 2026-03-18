@@ -21,6 +21,7 @@ export default function NewExpensePage() {
         description: '',
         date: new Date().toISOString().split('T')[0],
         vendor: '',
+        expense_class: 'variable',
     });
     const [receipt, setReceipt] = useState<File | null>(null);
     const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export default function NewExpensePage() {
             data.append('description', formData.description);
             data.append('date', formData.date);
             data.append('vendor', formData.vendor);
+            data.append('expense_class', formData.expense_class);
             if (receipt) {
                 data.append('receipt', receipt);
             }
@@ -127,16 +129,30 @@ export default function NewExpensePage() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div>
                             <label className="block text-sm font-medium text-slate-300 mb-2">Vendor / Merchant</label>
                             <input
                                 type="text"
                                 value={formData.vendor}
                                 onChange={(e) => setFormData({ ...formData, vendor: e.target.value })}
-                                placeholder="e.g., Safaricom, KPLC, etc."
+                                placeholder="e.g., Safaricom, etc."
                                 className="w-full bg-input border border-border rounded-lg py-2.5 px-4 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                             />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-300 mb-2">Expense Class</label>
+                            <select
+                                required
+                                value={formData.expense_class}
+                                onChange={(e) => setFormData({ ...formData, expense_class: e.target.value })}
+                                className="w-full bg-input border border-border rounded-lg py-2.5 px-4 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                            >
+                                <option value="fixed">Fixed (e.g., Rent, Insurance)</option>
+                                <option value="recurring">Recurring (e.g., Utilities)</option>
+                                <option value="variable">Variable (e.g., Supplies)</option>
+                                <option value="one_time">One-Time / Ad-Hoc</option>
+                            </select>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-slate-300 mb-2">Expense Date</label>

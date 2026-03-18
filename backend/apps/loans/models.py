@@ -592,6 +592,39 @@ class Loan(models.Model):
             self.loan_number = f"LN{prefix}{num:04d}"
         super().save(*args, **kwargs)
 
+    def sync_balances_to_coa(self, organization=None):
+        """
+        Immediately synchronizes the organization's COA balances (1210, 1220) 
+        with the current outstanding principal and interest of all its loans.
+        This provides a 'hard-sync' to ensure real-time accuracy.
+        """
+        from apps.accounting.models import ChartOfAccount
+        from apps.accounting.services import create_double_entry
+        from decimal import Decimal
+        
+        org = organization or self.organization
+        if not org:
+            return
+            
+        # 1. Calculate the current state of interest accrual
+        active_loans = Loan.objects.filter(organization=org, status__in=['active', 'defaulted'])
+        total_i = active_loans.aggregate(s=models.Sum('outstanding_interest'))['s'] or Decimal('0.00')
+        
+        # 2. Sync Interest (1220) only - Principal (1210) should only move via natural transactions
+        try:
+            coa_1220 = ChartOfAccount.objects.get(code='1220', organization=org)
+            i_diff = total_i - coa_1220.balance
+            if abs(i_diff) > Decimal('0.01'):
+                create_double_entry(
+                    date=timezone.now().date(),
+                    description=f"Interest Accrual Sync (Ref: {self.loan_number} - {self.borrower})",
+                    reference=f"ACCRUE-{org.id}-{timezone.now().timestamp()}",
+                    debits=[('1220', i_diff)],
+                    credits=[('4100', i_diff)],
+                    organization=org
+                )
+        except: pass
+
     def sync_schedules(self):
         """
         Ensures all schedules correctly reflect their status based on payments.
@@ -716,6 +749,20 @@ class LoanRepayment(models.Model):
     
     received_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     notes = models.TextField(blank=True)
+    
+    status = models.CharField(
+        max_length=20,
+        choices=[('completed', 'Completed'), ('voided', 'Voided')],
+        default='completed'
+    )
+    voided_at = models.DateTimeField(null=True, blank=True)
+    voided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='voided_repayments'
+    )
     
     created_at = models.DateTimeField(default=timezone.now)
     

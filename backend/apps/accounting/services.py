@@ -140,14 +140,55 @@ def post_loan_repayment(repayment, cash_account_code='1110'):
         # Avoid creating unbalanced entries if allocation is missing
         return None
         
-    total_credits = sum(amount for _, amount in credits)
+    # Real-time Accrual Sync: 
+    # When interest is paid, we must reduce the Receivable (1220) 
+    # while recognizing the Income (4100).
+    # Since 4100 is credited, we must add a DEBIT to 1220 to offset the accrual.
+    debits = [(cash_account_code, sum(amount for _, amount in credits))]
+    if repayment.interest_paid > 0:
+        debits.append(('1220', -repayment.interest_paid)) 
+        # Wait, if 1220 is an asset, a debit increases it. 
+        # But we already credited 1210 (Asset - reduces it).
+        # Actually, if we want to reduce 1220 (Asset), we must CREDIT it.
+        # But wait, the interest paid IS interest income.
+        
+        # Proper Accrual Accounting during payment:
+        # Debit: Cash (1110)
+        # Credit: Interest Receivable (1220)  <-- This reduces the "Expected" interest
+        # (The Income 4100 was already credited during DAILY ACCRUAL or should be now)
+        
+        # If we use the "Daily Accrual" model (1220 Debit, 4100 Credit),
+        # Then the payment should be:
+        # Debit: Cash (1110)
+        # Credit: Interest Receivable (1220)
+        
+        # Let's check my accrue_daily_interest task:
+        # It does: Debit 1220, Credit 4100 for the ENTIRE OUTSTANDING.
+        
+        # If we want REAL TIME:
+        # 1. Payment: Debit Cash, Credit 1210 (Prin), Credit 1220 (Int Receivable)
+        # 2. Daily Sync: Adjust 1220 to match dashboard.
+        
+        # BUT the user sees 4100 as Income. If we credit 1220, where does the 4100 come from?
+        # The 4100 came from the ACCRUAL.
+        
+    # Let's simplify and make it robust:
+    # We will CREDIT 1220 for interest paid instead of 4100.
+    # Because 4100 already received the amount during Accrual.
     
+    final_credits = []
+    for code, amount in credits:
+        if code == '4100': # Interest Income
+            final_credits.append(('1220', amount)) # Redirect to Clear Receivable
+        else:
+            final_credits.append((code, amount))
+
     create_double_entry(
         date=repayment.payment_date,
         description=f"Loan Repayment: {repayment.loan.loan_number} from {repayment.loan.borrower}",
         reference=repayment.reference_number,
-        debits=[(cash_account_code, total_credits)],
-        credits=credits,
+        debits=[(cash_account_code, sum(amount for _, amount in credits))],
+        credits=final_credits,
         organization=repayment.loan.organization
     )
 

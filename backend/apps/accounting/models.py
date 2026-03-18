@@ -77,6 +77,27 @@ class JournalEntry(models.Model):
         verbose_name_plural = "Journal Entries"
         ordering = ['-date', '-created_at']
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_status = self.status
+
+    def save(self, *args, **kwargs):
+        # Handle status transition from POSTED to VOID
+        if self.pk and self._original_status == self.Status.POSTED and self.status == self.Status.VOID:
+            self._reverse_all_ledger_entries()
+            
+        super().save(*args, **kwargs)
+        self._original_status = self.status
+
+    def _reverse_all_ledger_entries(self):
+        """Reverse all posted ledger entries for this journal."""
+        # Use simple_history or direct update to ensure COA is corrected
+        for entry in self.ledger_entries.filter(is_posted=True):
+            entry._reverse_account_balance()
+            entry.is_posted = False
+            # Save without triggering another balance update in entry.save()
+            super(LedgerEntry, entry).save(update_fields=['is_posted'])
+
 
 class LedgerEntry(models.Model):
     """Individual debit/credit entries in a Journal Entry."""

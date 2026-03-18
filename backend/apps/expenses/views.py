@@ -16,7 +16,7 @@ class ExpenseViewSet(TenantScopedViewSet):
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
     permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['account', 'status']
+    filterset_fields = ['account', 'status', 'expense_class']
     
     def perform_create(self, serializer):
         super().perform_create(serializer)
