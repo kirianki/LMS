@@ -6,10 +6,10 @@ from .views import (
 )
 
 router = DefaultRouter()
-router.register(r'', CollateralViewSet)
 router.register(r'valuers', ValuerViewSet)
 router.register(r'valuation-requests', ValuationRequestViewSet)
 router.register(r'valuation-reports', ValuationReportViewSet)
+router.register(r'', CollateralViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
