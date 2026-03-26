@@ -13,7 +13,8 @@
                 left: 1.8cm;
                 width: 17.4cm;
                 bottom: 0.5cm;
-                height: 1.2cm; }}
+                height: 1.2cm;
+            }}
 
         body {
             font-family: "Helvetica", "Arial", sans-serif;
@@ -26,7 +27,7 @@
         .letterhead {
             width: 100%;
 
-            border-bottom: 2pt solid {{ primary_color }}
+            border-bottom: 2pt solid {{primary_color}}
 
             ;
             padding-bottom: 10pt;
@@ -88,7 +89,7 @@
         }
 
         .info-grid td.value.highlight {
-            color: {{ primary_color }}
+            color: {{primary_color}}
 
             ;
             font-weight: bold;
@@ -105,7 +106,7 @@
             padding: 4pt 8pt;
             margin: 10pt 0 0 0;
 
-            background-color: {{ primary_color }}
+            background-color: {{primary_color}}
 
             ;
         }
@@ -228,7 +229,7 @@
         }
 
         .green {
-            color: {{ primary_color }}
+            color: {{primary_color}}
 
             ;
         }
@@ -326,12 +327,25 @@
             </td>
         </tr>
         <tr>
+            <td colspan="2" style="padding-top: 8pt;">
+                <div
+                    style="background-color: #f1f5f9; padding: 6pt; border-radius: 3pt; border-left: 3pt solid {{ primary_color }}; font-size: 8.5pt;">
+                    <strong>OFFICIAL REPAYMENT CHANNEL:</strong><br>
+                    {{ company_name }} NCBA-Bank PAYBILL: 880100 | ACCOUNT: 699232
+                </div>
+            </td>
+        </tr>
+        <tr>
             <td colspan="2" style="padding: 4pt 0 0 0;">
                 {% if payment_details %}
                 <div
                     style="font-size: 8pt; color: #475569; border: 0.5pt solid #bfdbfe; background:#eff6ff; padding: 5pt 8pt; border-radius: 3pt;">
                     <strong>Pre-filled Channel:</strong>
-                    {% for k, v in payment_details.items %}{% if v %} {{ k }}: <strong>{{ v }}</strong>{% endif %}{% endfor %}
+                    {% for k, v in payment_details.items %}
+                    {% if v %}
+                    {{ k }}: <strong>{{ v }}</strong>
+                    {% endif %}
+                    {% endfor %}
                 </div>
                 {% endif %}
             </td>
